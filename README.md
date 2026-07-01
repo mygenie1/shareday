@@ -8,9 +8,13 @@
 ```
 app/
   page.tsx                    캘린더 UI 마운트 (Claude Design 산출물 + /calendar.js)
-  layout.tsx                  루트 레이아웃 (Pretendard 폰트)
+  layout.tsx                  루트 레이아웃 (Pretendard 폰트, OG/트위터 메타)
   globals.css                 캘린더 스타일 (원본 <style>에서 추출)
   calendar-markup.ts          캘린더 body 마크업 (문자열)
+  icon.svg                    파비콘 (브랜드 마크)
+  apple-icon.tsx              iOS 홈 아이콘 (ImageResponse)
+  opengraph-image.tsx         카카오톡/OG 썸네일 1200×630 (ImageResponse)
+  og-font.ts                  OG용 Pretendard 서브셋(한글) base64 인라인
   s/[token]/                  받는 사람용 공개 페이지 (로그인 불필요)
     page.tsx  Recipient.tsx  recipient.css
   api/
@@ -63,3 +67,19 @@ DB/키 없이도 캘린더와 개인 일정(IndexedDB)은 동작합니다. 공�
 
 > 지시서에는 POST/GET/DELETE만 있었지만, "한 링크가 실시간으로 갱신된다"는 제품 약속
 > (프라이빗으로 내리면 공유 중인 링크에서도 숨겨짐)을 지키기 위해 **PUT**을 추가했습니다.
+
+## 브랜딩 / 메타
+
+- 파비콘·iOS 아이콘·카카오톡(OG) 썸네일은 Next.js App Router 규약 파일로 자동 배선됩니다.
+- 카카오톡은 `og:image`를 절대경로로 요구하므로 `layout.tsx`의 `metadataBase`(= `NEXT_PUBLIC_BASE_URL` 또는 프로덕션 URL)로 절대화합니다.
+- OG 썸네일의 한글은 Pretendard **서브셋 폰트**(썸네일에 쓰인 글자만)를 base64로 인라인해 렌더합니다.
+
+OG 문구를 바꿔 글자가 늘면 서브셋을 다시 만듭니다:
+
+```bash
+npm i -D subset-font   # 이미 devDependency로 포함
+# app/og-font.ts 재생성: Pretendard-Bold.otf를 받아 필요한 글자만 서브셋 → base64
+```
+
+> 카카오톡은 썸네일을 강하게 캐시합니다. 이전에 공유한 적이 있으면
+> [Kakao 캐시 초기화 도구](https://developers.kakao.com/tool/clear/og)로 URL 캐시를 지워야 새 썸네일이 보입니다.
