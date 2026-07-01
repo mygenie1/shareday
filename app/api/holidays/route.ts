@@ -15,6 +15,14 @@ function fmtLocdate(locdate: string | number): string {
 }
 
 /**
+ * Friendlier display names than the raw 특일 정보 labels.
+ * Applied on both the upstream parse (so new rows store the nice name) AND the
+ * cache-read path (so already-cached rows like "기독탄신일" are fixed on the fly).
+ */
+const NAME_FIX: Record<string, string> = { 기독탄신일: "크리스마스" };
+const displayName = (n: string): string => NAME_FIX[n] ?? n;
+
+/**
  * data.go.kr issues the "일반 인증키" in two forms:
  *   Encoding (URL-encoded, e.g. ...%2B%2F%3D)  /  Decoding (raw, e.g. ...+/=).
  * We normalize to the RAW form, then let URLSearchParams encode it exactly once —
@@ -75,7 +83,7 @@ export async function GET(req: Request) {
         cached: true,
         holidays: cached.map((r) => ({
           date: r.date,
-          name: r.name,
+          name: displayName(r.name),
           isHoliday: r.is_holiday,
         })),
       });
@@ -143,7 +151,7 @@ export async function GET(req: Request) {
       .filter((it: unknown) => it && typeof it === "object" && "locdate" in it)
       .map((it: { locdate: string | number; dateName?: string; isHoliday?: string }) => ({
         date: fmtLocdate(it.locdate),
-        name: String(it.dateName ?? "공휴일"),
+        name: displayName(String(it.dateName ?? "공휴일")),
         isHoliday: it.isHoliday !== "N",
       }));
   } catch (err) {

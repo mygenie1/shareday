@@ -265,7 +265,10 @@ function renderTimeline(){
 
   if(state.tlMode==='day'){
     const di=iso(state.selected);
-    $('#tlTitle').textContent=dayLabel(state.selected,today);
+    const selHol=HOLIDAYS[di], selDow=state.selected.getDay();
+    const tt=$('#tlTitle');
+    tt.className='tl-title'+(selHol?' holiday':selDow===0?' sun':selDow===6?' sat':'');
+    tt.innerHTML=esc(dayLabel(state.selected,today))+(selHol?` <span class="tl-holname">· ${esc(selHol)}</span>`:'');
     const evs=state.events.filter(e=>e.date===di).sort(byT);
     $('#tlBody').innerHTML=evs.length
       ? evs.map(rowHtml).join('')
@@ -288,9 +291,9 @@ function renderTimeline(){
 
     // header row: weekday + date
     let head=`<div class="tg-corner"></div>`;
-    days.forEach(d=>{const di=iso(d),isT=di===today,isS=di===selIso,sun=d.getDay()===0,sat=d.getDay()===6;
-      head+=`<div class="tg-dh${isT?' today':''}${isS?' sel':''}${sun?' sun':''}${sat?' sat':''}" data-date="${di}">
-        <span class="tg-dow">${WD[d.getDay()]}</span><span class="tg-dn">${d.getDate()}</span></div>`;});
+    days.forEach(d=>{const di=iso(d),isT=di===today,isS=di===selIso,sun=d.getDay()===0,sat=d.getDay()===6,hol=HOLIDAYS[di];
+      head+=`<div class="tg-dh${isT?' today':''}${isS?' sel':''}${sun?' sun':''}${sat?' sat':''}${hol?' holiday':''}" data-date="${di}" ${hol?`title="${esc(hol)}"`:''}>
+        <span class="tg-dow">${WD[d.getDay()]}</span><span class="tg-dn">${d.getDate()}</span>${hol?`<span class="tg-hol">${esc(hol)}</span>`:''}</div>`;});
 
     // all-day / untimed strip
     const untimedByDay=days.map(d=>state.events.filter(e=>e.date===iso(d)&&!e.time).sort((a,b)=>0));
