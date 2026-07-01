@@ -71,7 +71,7 @@ function renderMonth(){
     const selIso=iso(state.selected);
     const chips=shown.map(e=>{const c=cat(e.catId);
       return `<div class="chip" data-eid="${e.id}" style="background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">
-        <span class="cdot" style="background:${c.color}"></span><span style="overflow:hidden;text-overflow:ellipsis">${esc(e.title)}</span>
+        <span style="overflow:hidden;text-overflow:ellipsis">${esc(e.title)}</span>
         ${e.isPrivate?'<svg class="svg lk" viewBox="0 0 24 24" style="width:10px;height:10px;stroke-width:2.4"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}</div>`;
     }).join('');
     html+=`<div class="cell${out?' out':''}${di===todayIso?' today':''}${sun?' sun':''}${sat?' sat':''}${hol?' holiday':''}${di===selIso?' sel':''}" data-date="${di}" ${hol?`title="${esc(hol)}"`:''}>
@@ -136,7 +136,7 @@ function attachMonthDrag(){
 function renderLegend(){
   $('#legend').innerHTML='<span class="lbl">카테고리</span>'+state.categories.map(c=>
     `<span class="tag" style="background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">
-      <span class="cdot" style="background:${c.color}"></span>${esc(c.name)}</span>`).join('')
+      ${esc(c.name)}</span>`).join('')
     +`<button class="gear" id="legendGear"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" stroke-linecap="round" stroke-linejoin="round"/></svg>편집</button>`;
   $('#legendGear').onclick=openSettings;
 }
@@ -171,7 +171,7 @@ function renderCatPick(){
   $('#catPick').innerHTML=state.categories.map(c=>
     `<button class="catopt${c.id===sel?' sel':''}" data-cid="${c.id}"
       style="background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">
-      <span class="cdot" style="background:${c.color}"></span>${esc(c.name)}</button>`).join('')
+      ${esc(c.name)}</button>`).join('')
     +`<button class="catopt add" id="addCat">＋ 새로</button>`;
   $$('#catPick .catopt[data-cid]').forEach(b=>b.onclick=()=>{state.form.catId=b.dataset.cid;renderCatPick();});
   $('#addCat').onclick=()=>openCatBuilder();
@@ -535,7 +535,6 @@ function evRowHtml(e){
   const bg=e.isPrivate?'':`background:${tint(c.color,isDark())}`;
   const col=e.isPrivate?'':`color:${inkOn(c.color,isDark())}`;
   return `<div class="evrow${e.isPrivate?' priv':''}" data-id="${e.id}" style="${bg}">
-    <span class="cdot" style="background:${c.color}"></span>
     <span class="nm" style="${col}">${esc(e.title)}<span class="when" style="color:${e.isPrivate?'var(--ink-faint)':inkOn(c.color,isDark())};opacity:.72">${fmtWhen(e)}</span></span>${dir}</div>`;
 }
 function byDate(a,b){return (a.date+ (a.time||'')).localeCompare(b.date+(b.time||''));}

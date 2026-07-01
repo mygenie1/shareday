@@ -109,10 +109,7 @@ export default function Recipient({
                   <span className="rc-time">
                     {e.time ? e.time + (e.end ? "–" + e.end : "") : "종일"}
                   </span>
-                  <span className="rc-title">
-                    <span className="rc-dot" style={{ background: color }} />
-                    {e.title}
-                  </span>
+                  <span className="rc-title">{e.title}</span>
                 </div>
                 {c?.name ? <div className="rc-cat">{c.name}</div> : null}
                 {e.memo ? <div className="rc-memo">{e.memo}</div> : null}
