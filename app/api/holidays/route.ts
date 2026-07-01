@@ -15,6 +15,33 @@ function fmtLocdate(locdate: string | number): string {
 }
 
 /**
+ * data.go.kr issues the "일반 인증키" in two forms:
+ *   Encoding (URL-encoded, e.g. ...%2B%2F%3D)  /  Decoding (raw, e.g. ...+/=).
+ * We normalize to the RAW form, then let URLSearchParams encode it exactly once —
+ * so it works no matter which form was pasted into DATA_GO_KR_KEY. (Base64 keys
+ * never contain '%', so seeing "%XX" reliably means it's the Encoded form.)
+ */
+function rawServiceKey(k: string): string {
+  if (/%[0-9A-Fa-f]{2}/.test(k)) {
+    try {
+      return decodeURIComponent(k);
+    } catch {
+      return k;
+    }
+  }
+  return k;
+}
+
+/**
+ * Throttle upstream retries for a year that yields nothing (e.g. future years
+ * with no published data, or a transient error). Successful years are cached in
+ * Postgres permanently, so this only bounds the empty/error path within a warm
+ * instance — keeps external calls at ~once/year as intended.
+ */
+const lastTried = new Map<number, number>();
+const RETRY_MS = 6 * 60 * 60 * 1000; // 6h
+
+/**
  * GET /api/holidays?year=YYYY
  * Serves from the `holidays` cache; on a miss, fetches the public-data API
  * (server-side, key never exposed), upserts, then returns. Empty/failed
@@ -63,17 +90,52 @@ export async function GET(req: Request) {
     return NextResponse.json({ year, holidays: [], note: "DATA_GO_KR_KEY unset" });
   }
 
+  const prev = lastTried.get(year);
+  if (prev && Date.now() - prev < RETRY_MS) {
+    return NextResponse.json({
+      year,
+      holidays: [],
+      note: "recently attempted; upstream had no data (throttled)",
+    });
+  }
+  lastTried.set(year, Date.now());
+
   let holidays: Holiday[] = [];
   try {
     const url = new URL(DATA_GO_KR_ENDPOINT);
-    url.searchParams.set("serviceKey", key); // decoded key; URL encodes it once
+    url.searchParams.set("serviceKey", rawServiceKey(key)); // works for Encoding or Decoding key
     url.searchParams.set("solYear", String(year));
     url.searchParams.set("numOfRows", "50");
     url.searchParams.set("_type", "json");
 
     const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error(`upstream ${res.status}`);
-    const json = await res.json();
+    const text = await res.text();
+
+    // data.go.kr returns XML (not JSON) on auth/key errors even with _type=json.
+    let json: any;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      const reason = (text.match(/<returnAuthMsg>([^<]*)<\/returnAuthMsg>/) ||
+        text.match(/<errMsg>([^<]*)<\/errMsg>/) ||
+        [])[1];
+      console.error("[holidays upstream non-JSON]", res.status, text.slice(0, 300));
+      return NextResponse.json({
+        year,
+        holidays: [],
+        note: `upstream auth/key error${reason ? ": " + reason : ""}`,
+      });
+    }
+
+    const header = json?.response?.header;
+    if (header?.resultCode && header.resultCode !== "00") {
+      console.error("[holidays upstream result]", header.resultCode, header.resultMsg);
+      return NextResponse.json({
+        year,
+        holidays: [],
+        note: `upstream ${header.resultCode}: ${header.resultMsg || ""}`.trim(),
+      });
+    }
 
     const rawItems = json?.response?.body?.items?.item ?? [];
     const items = Array.isArray(rawItems) ? rawItems : [rawItems];
@@ -90,17 +152,20 @@ export async function GET(req: Request) {
   }
 
   // 3) upsert into cache (few rows/year → simple per-row upsert is fine)
-  try {
-    for (const h of holidays) {
-      await sql`
-        insert into holidays (date, name, is_holiday)
-        values (${h.date}, ${h.name}, ${h.isHoliday})
-        on conflict (date) do update
-          set name = excluded.name, is_holiday = excluded.is_holiday
-      `;
+  if (holidays.length) {
+    try {
+      for (const h of holidays) {
+        await sql`
+          insert into holidays (date, name, is_holiday)
+          values (${h.date}, ${h.name}, ${h.isHoliday})
+          on conflict (date) do update
+            set name = excluded.name, is_holiday = excluded.is_holiday
+        `;
+      }
+      lastTried.delete(year); // cached now; future reads hit Postgres, not upstream
+    } catch (err) {
+      console.error("[holidays cache write]", err);
     }
-  } catch (err) {
-    console.error("[holidays cache write]", err);
   }
 
   return NextResponse.json({ year, cached: false, holidays });
