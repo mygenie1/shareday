@@ -16,7 +16,6 @@ const state = {
     {id:'c0', name:'기타',   color:'#64748B', fixed:true},
   ],
   events: [],
-  shareLinks: 1,              // number of active links (drives the warning)
   editingId:null,
   form:{catId:'c1',isPrivate:false},
   newCat:{color:'#10B981'},
@@ -515,7 +514,7 @@ $('#setDone').onclick=()=>closeScrim('#setScrim');
 
 /* ---------- share sheet with two zones + global sync ---------- */
 let shareExp=30, shareCmt=true;
-function openShare(){renderZones();renderWarn();openScrim('#shScrim');ensureShareLink();}
+function openShare(){renderZones();renderWarn();openScrim('#shScrim');ensureShareLink();renderInbox();}
 function renderWarn(){
   $('#warnBox').innerHTML = state.share.token
     ? `<div class="warn"><svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3L13.7 4a2 2 0 0 0-3.4 0z"/></svg>
@@ -606,6 +605,11 @@ function afterMutate(){ persist(); syncShareIfLive(); }
 
 /* ---------- share link (public snapshot only) ---------- */
 state.share={token:null,url:null,syncing:false};
+/* Tokens this device has created. There are no accounts, so "ownership" is just
+   "you hold the token" — anyone with the token can read/comment. This local list
+   is only a convenience so the creator can revisit comments on links they made. */
+state.shareLinks=[];      // [{token,url,createdAt}], newest last
+state.cmtSeenAt=0;        // last time the owner viewed the inbox → drives the "새 N" badge
 function publicPayload(){
   return {
     events: state.events.filter(e=>!e.isPrivate),   // client-side pre-filter; server re-filters too
@@ -622,7 +626,7 @@ async function ensureShareLink(){
   try{
     const res=await fetch('/api/share',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(publicPayload())});
     const data=await res.json();
-    if(res.ok){ state.share.token=data.token; state.share.url=data.url; $('#linkText').textContent=data.url; }
+    if(res.ok){ state.share.token=data.token; state.share.url=data.url; $('#linkText').textContent=data.url; rememberShareLink(data.token,data.url); }
     else { $('#linkText').textContent='링크 생성 실패'; toast('링크를 만들지 못했어요'); }
   }catch(e){ $('#linkText').textContent='링크 생성 실패'; toast('네트워크 오류예요'); }
   finally{ state.share.syncing=false; renderWarn(); }
@@ -645,7 +649,74 @@ async function revokeShareLink(){
   const tok=state.share.token; if(!tok) return;
   state.share.token=null; state.share.url=null;
   $('#linkText').textContent='shareday.app/s/…'; renderWarn();
+  forgetShareLink(tok);
   try{ await fetch('/api/share/'+encodeURIComponent(tok),{method:'DELETE'}); }catch(e){}
+}
+
+/* ---------- owner-side comment inbox (read-only) ---------- */
+function saveShareLinks(){ idbSet('shareLinks', state.shareLinks); }
+function rememberShareLink(token,url){
+  if(!token) return;
+  if(state.shareLinks.some(l=>l.token===token)){ renderInbox(); return; }
+  state.shareLinks.push({token,url,createdAt:Date.now()});
+  saveShareLinks(); renderInbox();
+}
+function forgetShareLink(token){
+  state.shareLinks=state.shareLinks.filter(l=>l.token!==token);
+  saveShareLinks(); renderInbox();
+}
+function fmtCmtTime(iso){
+  const d=new Date(iso); if(isNaN(d.getTime())) return '';
+  const p=n=>String(n).padStart(2,'0');
+  return `${d.getMonth()+1}.${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+/* insert the inbox container into the share sheet, just above the action row */
+function ensureInboxEl(){
+  let el=document.getElementById('cmtInbox');
+  if(el) return el;
+  const sheet=document.querySelector('#shScrim .sheet');
+  if(!sheet) return null;
+  el=document.createElement('div'); el.id='cmtInbox'; el.className='cmt-inbox';
+  const actions=sheet.querySelector('.sheet-actions');
+  sheet.insertBefore(el, actions);
+  return el;
+}
+async function renderInbox(){
+  const el=ensureInboxEl(); if(!el) return;
+  const links=state.shareLinks||[];
+  if(!links.length){ el.innerHTML=''; return; }   // never shared → nothing to show
+  el.innerHTML='<div class="inbox-h">받은 코멘트 <span class="inbox-cnt" id="inboxCnt"></span></div>'+
+               '<div class="inbox-body" id="inboxBody"><p class="inbox-empty">불러오는 중…</p></div>';
+  const seenAt=state.cmtSeenAt||0;
+  // fetch each live link's snapshot (for titles) + its comments; revoked/expired links drop out
+  const results=await Promise.all(links.map(async l=>{
+    try{
+      const [snapRes,cmtRes]=await Promise.all([
+        fetch('/api/share/'+encodeURIComponent(l.token)),
+        fetch('/api/share/'+encodeURIComponent(l.token)+'/comments'),
+      ]);
+      if(!snapRes.ok||!cmtRes.ok) return null;
+      const snap=await snapRes.json(), cmt=await cmtRes.json();
+      const titles={}; (snap.events||[]).forEach(e=>{titles[e.id]=e.title;});
+      return (cmt.comments||[]).map(c=>({...c,title:titles[c.event_id]||'(삭제된 일정)'}));
+    }catch(e){ return null; }
+  }));
+  const all=results.filter(Boolean).flat()
+    .sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')));
+  const body=document.getElementById('inboxBody'), cntEl=document.getElementById('inboxCnt');
+  if(!body) return;
+  const fresh=all.filter(c=>new Date(c.created_at).getTime()>seenAt).length;
+  if(!all.length){
+    body.innerHTML='<p class="inbox-empty">아직 받은 코멘트가 없어요.</p>';
+    if(cntEl) cntEl.textContent='';
+  }else{
+    if(cntEl) cntEl.innerHTML='· '+all.length+(fresh?' <span class="inbox-new">새 '+fresh+'</span>':'');
+    body.innerHTML=all.map(c=>`<div class="inbox-row">
+      <div class="inbox-top"><span class="inbox-title">${esc(c.title)}</span><span class="inbox-time">${fmtCmtTime(c.created_at)}</span></div>
+      <div class="inbox-cmt"><b>${esc(c.author_name)}</b> ${esc(c.body)}</div></div>`).join('');
+  }
+  // opening the inbox counts as reading → reset the "new" baseline
+  state.cmtSeenAt=Date.now(); idbSet('cmtSeenAt',state.cmtSeenAt);
 }
 
 /* ---------- holidays (server-cached) ---------- */
@@ -664,10 +735,14 @@ function ensureHolidays(year){
 
 /* ---------- boot ---------- */
 async function loadState(){
-  const [ev,cats]=await Promise.all([idbGet('events'),idbGet('categories')]);
+  const [ev,cats,links,seen]=await Promise.all([
+    idbGet('events'),idbGet('categories'),idbGet('shareLinks'),idbGet('cmtSeenAt')
+  ]);
   if(Array.isArray(cats)&&cats.length) state.categories=cats;
   if(Array.isArray(ev)) state.events=ev;          // stored (even empty) → respect it
                                                   // first run → start with an empty calendar
+  if(Array.isArray(links)) state.shareLinks=links;
+  if(typeof seen==='number') state.cmtSeenAt=seen;
 }
 async function initApp(){
   try{ await loadState(); }catch(e){ console.warn('[shareday] load failed',e); }
