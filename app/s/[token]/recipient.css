@@ -1,0 +1,49 @@
+/* Recipient (public share) view — reuses the theme tokens from globals.css */
+.rc-wrap{max-width:640px;margin:0 auto;padding:28px 18px 80px}
+.rc-head{display:flex;flex-direction:column;gap:6px;margin-bottom:24px}
+.rc-brand{display:flex;align-items:center;gap:10px}
+.rc-mark{width:30px;height:30px;position:relative;flex-shrink:0}
+.rc-mark::before{content:"";position:absolute;left:1px;top:2px;width:19px;height:19px;border-radius:7px;background:#34D399}
+.rc-mark::after{content:"";position:absolute;right:1px;bottom:2px;width:19px;height:19px;border-radius:7px;background:#0EA271}
+.rc-word{font-size:20px;font-weight:800;letter-spacing:-.035em;color:var(--ink)}
+.rc-sub{font-size:12.5px;color:var(--ink-faint);padding-left:40px}
+
+.rc-day{margin-bottom:18px}
+.rc-daylabel{font-size:12.5px;font-weight:700;color:var(--ink-soft);padding:6px 2px 10px}
+.rc-ev{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--ink-faint);
+  border-radius:12px;padding:13px 15px;margin-bottom:9px;box-shadow:var(--shadow-soft)}
+.rc-ev-top{display:flex;align-items:baseline;gap:10px}
+.rc-time{font-size:12px;font-weight:600;color:var(--ink-faint);font-variant-numeric:tabular-nums;min-width:76px}
+.rc-title{font-size:14.5px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:6px}
+.rc-em{font-size:14px}
+.rc-cat{font-size:11.5px;color:var(--ink-faint);margin-top:4px;padding-left:86px}
+.rc-memo{font-size:12.5px;color:var(--ink-soft);margin-top:8px;line-height:1.5;white-space:pre-wrap;
+  padding-left:10px;border-left:2px solid var(--line);margin-left:2px}
+
+.rc-cmt{margin-top:12px;border-top:1px solid var(--line-soft);padding-top:10px}
+.rc-cmt-row{display:flex;gap:8px;font-size:12.5px;padding:4px 0;line-height:1.5}
+.rc-cmt-row b{color:var(--ink);font-weight:700;flex-shrink:0}
+.rc-cmt-row span{color:var(--ink-soft);white-space:pre-wrap}
+.rc-cmt-toggle{font-size:12.5px;font-weight:600;color:var(--ink-soft);background:none;border:none;
+  cursor:pointer;padding:6px 0 2px}
+.rc-cmt-toggle:hover{color:var(--accent)}
+.rc-cmt-form{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.rc-inp{width:100%;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);
+  color:var(--ink);font-family:inherit;font-size:13.5px}
+.rc-inp:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.rc-ta{resize:vertical;min-height:60px;line-height:1.5}
+.rc-cmt-actions{display:flex;gap:8px;justify-content:flex-end}
+.rc-btn{height:36px;padding:0 14px;border-radius:10px;font-family:inherit;font-size:13px;font-weight:600;
+  cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+.rc-btn.solid{background:var(--accent);color:#fff;border-color:transparent}
+.rc-btn.ghost{background:transparent;border-color:transparent;color:var(--ink-soft)}
+.rc-btn:disabled{opacity:.5;cursor:not-allowed}
+.rc-err{font-size:12px;color:var(--danger)}
+
+.rc-empty-card{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+  padding:40px 24px;text-align:center;box-shadow:var(--shadow-soft);margin-top:40px}
+.rc-empty-card h1{font-size:18px;font-weight:700;color:var(--ink);margin-bottom:8px}
+.rc-empty-card p{font-size:13.5px;color:var(--ink-faint);line-height:1.6}
+
+.rc-foot{text-align:center;font-size:11.5px;color:var(--ink-faint);margin-top:32px}
+[data-theme="dark"] .rc-btn.solid{color:#12211A}
