@@ -73,7 +73,7 @@ $('#themeBtn').onclick=()=>{state.theme=isDark()?'light':'dark';applyTheme();};
 
 /* ---------- calendar ---------- */
 const DOW=['일','월','화','수','목','금','토'];
-function renderDow(){$('#dowRow').innerHTML=DOW.map((d,i)=>`<div class="dow${i===0?' sun':''}">${d}</div>`).join('');}
+function renderDow(){$('#dowRow').innerHTML=DOW.map((d,i)=>`<div class="dow${i===0?' sun':''}${i===6?' sat':''}">${d}</div>`).join('');}
 let monthDragMoved=false, keepScroll=null;
 function reRender(preserve){ if(preserve){const s=document.querySelector('#tlBody .tg-scroll'); keepScroll=s?{left:s.scrollLeft,top:s.scrollTop}:null;} renderMonth(); renderTimeline(); keepScroll=null; afterMutate(); }
 function renderMonth(){
@@ -85,7 +85,7 @@ function renderMonth(){
   let html='';
   for(let i=0;i<42;i++){
     const d=new Date(start); d.setDate(start.getDate()+i);
-    const di=iso(d), out=d.getMonth()!==m, sun=d.getDay()===0, hol=HOLIDAYS[di];
+    const di=iso(d), out=d.getMonth()!==m, sun=d.getDay()===0, sat=d.getDay()===6, hol=HOLIDAYS[di];
     const evs=state.events.filter(e=>e.date===di).sort((a,b)=>(a.time||'').localeCompare(b.time||''));
     const shown=evs.slice(0,2), extra=evs.length-shown.length;
     const selIso=iso(state.selected);
@@ -94,7 +94,7 @@ function renderMonth(){
         <span class="em">${c.emoji}</span><span style="overflow:hidden;text-overflow:ellipsis">${esc(e.title)}</span>
         ${e.isPrivate?'<svg class="svg lk" viewBox="0 0 24 24" style="width:10px;height:10px;stroke-width:2.4"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}</div>`;
     }).join('');
-    html+=`<div class="cell${out?' out':''}${di===todayIso?' today':''}${sun?' sun':''}${hol?' holiday':''}${di===selIso?' sel':''}" data-date="${di}" ${hol?`title="${esc(hol)}"`:''}>
+    html+=`<div class="cell${out?' out':''}${di===todayIso?' today':''}${sun?' sun':''}${sat?' sat':''}${hol?' holiday':''}${di===selIso?' sel':''}" data-date="${di}" ${hol?`title="${esc(hol)}"`:''}>
       <div class="dn">${d.getDate()}</div>
       ${hol?`<div class="hol-name">${esc(hol)}</div>`:''}
       <div class="chips">${chips}${extra>0?`<div class="more">+${extra}</div>`:''}</div></div>`;
@@ -288,8 +288,8 @@ function renderTimeline(){
 
     // header row: weekday + date
     let head=`<div class="tg-corner"></div>`;
-    days.forEach(d=>{const di=iso(d),isT=di===today,isS=di===selIso,sun=d.getDay()===0;
-      head+=`<div class="tg-dh${isT?' today':''}${isS?' sel':''}${sun?' sun':''}" data-date="${di}">
+    days.forEach(d=>{const di=iso(d),isT=di===today,isS=di===selIso,sun=d.getDay()===0,sat=d.getDay()===6;
+      head+=`<div class="tg-dh${isT?' today':''}${isS?' sel':''}${sun?' sun':''}${sat?' sat':''}" data-date="${di}">
         <span class="tg-dow">${WD[d.getDay()]}</span><span class="tg-dn">${d.getDate()}</span></div>`;});
 
     // all-day / untimed strip
