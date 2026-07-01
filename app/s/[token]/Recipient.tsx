@@ -14,7 +14,6 @@ export type RecipientEvent = {
 export type RecipientCategory = {
   id: string;
   name?: string;
-  emoji?: string;
   color?: string;
 };
 export type RecipientComment = {
@@ -111,7 +110,7 @@ export default function Recipient({
                     {e.time ? e.time + (e.end ? "–" + e.end : "") : "종일"}
                   </span>
                   <span className="rc-title">
-                    {c?.emoji ? <span className="rc-em">{c.emoji}</span> : null}
+                    <span className="rc-dot" style={{ background: color }} />
                     {e.title}
                   </span>
                 </div>

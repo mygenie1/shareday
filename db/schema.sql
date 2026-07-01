@@ -5,7 +5,7 @@
 create table if not exists share_links (
   token          text primary key,            -- 추측 불가한 랜덤 토큰
   events         jsonb not null,              -- isPrivate=false 인 일정만 담김
-  categories     jsonb not null default '[]', -- 스냅샷에 쓰인 카테고리(색/이모지) 사본
+  categories     jsonb not null default '[]', -- 스냅샷에 쓰인 카테고리(이름/색) 사본
   allow_comments boolean not null default true,
   expires_at     timestamptz,                 -- null이면 무기한
   revoked        boolean not null default false,

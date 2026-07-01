@@ -8,44 +8,24 @@ const state = {
   theme: (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark':'light',
   view: new Date(),
   categories: [
-    {id:'c1', name:'업무',   emoji:'💼', color:'#FF8A5B'},
-    {id:'c2', name:'약속',   emoji:'👥', color:'#3B82F6'},
-    {id:'c3', name:'개인',   emoji:'❤️', color:'#EF6B7D'},
-    {id:'c4', name:'마감',   emoji:'🚩', color:'#F59E0B'},
-    {id:'c5', name:'이동',   emoji:'✈️', color:'#7C6BE8'},
-    {id:'c0', name:'기타',   emoji:'📌', color:'#64748B', fixed:true},
+    {id:'c1', name:'업무',   color:'#FF8A5B'},
+    {id:'c2', name:'약속',   color:'#3B82F6'},
+    {id:'c3', name:'개인',   color:'#EF6B7D'},
+    {id:'c4', name:'마감',   color:'#F59E0B'},
+    {id:'c5', name:'이동',   color:'#7C6BE8'},
+    {id:'c0', name:'기타',   color:'#64748B', fixed:true},
   ],
   events: [],
   shareLinks: 1,              // number of active links (drives the warning)
   editingId:null,
   form:{catId:'c1',isPrivate:false},
-  newCat:{emoji:'🏃', color:'#10B981'},
+  newCat:{color:'#10B981'},
   selected:new Date(),        // date focused in the timeline
   tlMode:'day',               // 'day' | 'week'
   tlCollapsed:false,
 };
 
 const PALETTE = ['#10B981','#34D399','#3B82F6','#7C6BE8','#EF6B7D','#FF8A5B','#F59E0B','#EAB308','#14B8A6','#EC4899','#64748B','#0EA271'];
-const EMOJIS = ['💼','👥','❤️','🚩','✈️','🏃','📚','🍽️','☕','🎬','🎧','🩺','💊','🛒','🎂','🐶','🌱','💰','🧘','🎨','⚽','🎓','🛠️','🔔','📞','🧳','🎉','🌙','☀️','🍷'];
-
-/* seed a few events around today — only used on very first run (empty store) */
-function seed(){
-  const d=new Date(), y=d.getFullYear(), m=d.getMonth();
-  const addMin=(t,min)=>{let[h,mm]=t.split(':').map(Number);mm+=min;h+=Math.floor(mm/60);mm%=60;h=Math.min(23,h);return String(h).padStart(2,'0')+':'+String(mm).padStart(2,'0');};
-  const mk=(day,h,t,cat,priv,dur,memo)=>({id:'e'+Math.random().toString(36).slice(2,8),
-    date:`${y}-${String(m+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`,time:h,end:addMin(h,dur||60),title:t,catId:cat,isPrivate:!!priv,memo:memo||''});
-  const dim=new Date(y,m+1,0).getDate();       // days in this month
-  const clamp=n=>Math.max(1,Math.min(dim,n));
-  const dd=d.getDate();
-  state.events.push(
-    mk(dd,'14:00','팀 회의','c1',false,90,'2층 회의실 B. 지난주 회고 자료 챙기기.'),
-    mk(dd,'19:00','스터디','c4',false,120,'3장 예제 풀어오기'),
-    mk(clamp(dd+2),'07:00','러닝','c1',false,45),
-    mk(clamp(dd+4),'12:30','점심 약속','c2',false,60,'서연이랑 을지로 냉면'),
-    mk(clamp(dd+5),'15:00','병원 예약','c3',true,30,'보험 카드 지참'),
-    mk(clamp(dd+9),'20:00','영화','c5',false,150),
-  );
-}
 
 /* ---------- helpers ---------- */
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
@@ -91,7 +71,7 @@ function renderMonth(){
     const selIso=iso(state.selected);
     const chips=shown.map(e=>{const c=cat(e.catId);
       return `<div class="chip" data-eid="${e.id}" style="background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">
-        <span class="em">${c.emoji}</span><span style="overflow:hidden;text-overflow:ellipsis">${esc(e.title)}</span>
+        <span class="cdot" style="background:${c.color}"></span><span style="overflow:hidden;text-overflow:ellipsis">${esc(e.title)}</span>
         ${e.isPrivate?'<svg class="svg lk" viewBox="0 0 24 24" style="width:10px;height:10px;stroke-width:2.4"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}</div>`;
     }).join('');
     html+=`<div class="cell${out?' out':''}${di===todayIso?' today':''}${sun?' sun':''}${sat?' sat':''}${hol?' holiday':''}${di===selIso?' sel':''}" data-date="${di}" ${hol?`title="${esc(hol)}"`:''}>
@@ -156,7 +136,7 @@ function attachMonthDrag(){
 function renderLegend(){
   $('#legend').innerHTML='<span class="lbl">카테고리</span>'+state.categories.map(c=>
     `<span class="tag" style="background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">
-      <span class="em">${c.emoji}</span>${esc(c.name)}</span>`).join('')
+      <span class="cdot" style="background:${c.color}"></span>${esc(c.name)}</span>`).join('')
     +`<button class="gear" id="legendGear"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" stroke-linecap="round" stroke-linejoin="round"/></svg>편집</button>`;
   $('#legendGear').onclick=openSettings;
 }
@@ -191,7 +171,7 @@ function renderCatPick(){
   $('#catPick').innerHTML=state.categories.map(c=>
     `<button class="catopt${c.id===sel?' sel':''}" data-cid="${c.id}"
       style="background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">
-      <span>${c.emoji}</span>${esc(c.name)}</button>`).join('')
+      <span class="cdot" style="background:${c.color}"></span>${esc(c.name)}</button>`).join('')
     +`<button class="catopt add" id="addCat">＋ 새로</button>`;
   $$('#catPick .catopt[data-cid]').forEach(b=>b.onclick=()=>{state.form.catId=b.dataset.cid;renderCatPick();});
   $('#addCat').onclick=()=>openCatBuilder();
@@ -250,7 +230,7 @@ function rowHtml(e){
     <span class="tl-time">${e.time?(e.time+(e.end?'–'+e.end:'')):'종일'}</span>
     <span class="tl-dot" style="background:${c.color}"></span>
     <div class="tl-main">
-      <div class="tl-nm" style="color:${inkOn(c.color,isDark())}"><span class="em">${c.emoji}</span>${esc(e.title)}
+      <div class="tl-nm" style="color:${inkOn(c.color,isDark())}">${esc(e.title)}
         ${e.isPrivate?'<svg class="svg lk" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}</div>
       <div class="tl-cat">${esc(c.name)}</div>
       ${memo}
@@ -303,7 +283,7 @@ function renderTimeline(){
       allday=`<div class="tg-adlabel">종일</div>`+days.map((d,i)=>{
         const evs=untimedByDay[i];
         return `<div class="tg-adcell" data-date="${iso(d)}">${evs.map(e=>{const c=cat(e.catId);
-          return `<div class="tg-chip" data-eid="${e.id}" style="background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">${c.emoji} ${esc(e.title)}</div>`;}).join('')}</div>`;
+          return `<div class="tg-chip" data-eid="${e.id}" style="background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">${esc(e.title)}</div>`;}).join('')}</div>`;
       }).join('');
     }
 
@@ -331,7 +311,7 @@ function renderTimeline(){
           background:${tint(c.color,isDark())};border-left:3px solid ${c.color};color:${inkOn(c.color,isDark())}">
           <span class="tg-grip tg-grip-top" data-grip="top"></span>
           <span class="tg-bt">${e.time}${showEnd&&e.end?'–'+e.end:''}</span>
-          <span class="tg-bn">${c.emoji} ${esc(e.title)}${e.memo?' <svg class="svg" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.2;display:inline;vertical-align:baseline"><path d="M4 6h16M4 12h16M4 18h10"/></svg>':''}${e.isPrivate?' <svg class="svg lk" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.4"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}</span>
+          <span class="tg-bn">${esc(e.title)}${e.memo?' <svg class="svg" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.2;display:inline;vertical-align:baseline"><path d="M4 6h16M4 12h16M4 18h10"/></svg>':''}${e.isPrivate?' <svg class="svg lk" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.4"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}</span>
           <span class="tg-grip tg-grip-bot" data-grip="bot"></span>
         </div>`;}).join('');
       let lines=''; for(let hh=minH;hh<maxH;hh++) lines+=`<div class="tg-line" style="top:${(hh-minH)*PXH}px"></div>`;
@@ -446,39 +426,36 @@ function openCatBuilder(editId, fromSettings){
   const e = editId ? state.categories.find(c=>c.id===editId) : null;
   state.editingCatId = editId||null;
   state.catReturnSettings = !!fromSettings;
-  state.newCat = e ? {emoji:e.emoji,color:e.color} : {emoji:'🏃',color:'#10B981'};
+  state.newCat = e ? {color:e.color} : {color:'#10B981'};
   $('#catBuilderTitle').textContent = e ? '카테고리 수정' : '새 카테고리';
   $('#cSave').textContent = e ? '저장' : '만들기';
   $('#cName').value = e ? e.name : '';
-  $('#emGrid').innerHTML=EMOJIS.map(em=>`<div class="emo${em===state.newCat.emoji?' sel':''}" data-e="${em}">${em}</div>`).join('');
   $('#palette').innerHTML=PALETTE.map(c=>`<div class="sw${c===state.newCat.color?' sel':''}" data-c="${c}" style="background:${c}"></div>`).join('')
     +`<label class="sw hex" title="직접 지정">#<input type="color" id="hexIn" style="position:absolute;opacity:0;width:28px;height:28px;cursor:pointer"></label>`;
-  $$('#emGrid .emo').forEach(x=>x.onclick=()=>{state.newCat.emoji=x.dataset.e;refreshCatBuilder();});
   $$('#palette .sw[data-c]').forEach(x=>x.onclick=()=>{state.newCat.color=x.dataset.c;refreshCatBuilder();});
   $('#hexIn').oninput=ev=>{state.newCat.color=ev.target.value;refreshCatBuilder();};
   checkDupe();
   openScrim('#catScrim'); setTimeout(()=>$('#cName').focus(),120);
 }
 function refreshCatBuilder(){
-  $$('#emGrid .emo').forEach(x=>x.classList.toggle('sel',x.dataset.e===state.newCat.emoji));
   $$('#palette .sw[data-c]').forEach(x=>x.classList.toggle('sel',x.dataset.c===state.newCat.color));
   checkDupe();
 }
 $('#cName').oninput=checkDupe;
 function checkDupe(){
-  const dup=state.categories.find(c=>c.id!==state.editingCatId && c.emoji===state.newCat.emoji && c.color.toLowerCase()===state.newCat.color.toLowerCase());
+  const dup=state.categories.find(c=>c.id!==state.editingCatId && c.color.toLowerCase()===state.newCat.color.toLowerCase());
   const el=$('#dupeMsg');
-  if(dup){el.textContent=`'${dup.name}'와 같은 색·이모지예요. 그대로 둬도 되지만 헷갈릴 수 있어요.`;el.classList.add('on');}
+  if(dup){el.textContent=`'${dup.name}'와 같은 색이에요. 그대로 둬도 되지만 헷갈릴 수 있어요.`;el.classList.add('on');}
   else el.classList.remove('on');
 }
 $('#cSave').onclick=()=>{
   const name=$('#cName').value.trim()||'새 카테고리';
   if(state.editingCatId){
-    Object.assign(state.categories.find(c=>c.id===state.editingCatId),{name,emoji:state.newCat.emoji,color:state.newCat.color});
+    Object.assign(state.categories.find(c=>c.id===state.editingCatId),{name,color:state.newCat.color});
     toast('카테고리를 수정했어요');
   }else{
     const id='c'+Math.random().toString(36).slice(2,7);
-    state.categories.push({id,name,emoji:state.newCat.emoji,color:state.newCat.color});
+    state.categories.push({id,name,color:state.newCat.color});
     state.form.catId=id;
     toast('카테고리를 만들었어요');
   }
@@ -494,7 +471,7 @@ function renderCatList(){
   $('#catList').innerHTML = state.categories.map(c=>{
     const used = state.events.filter(e=>e.catId===c.id).length;
     return `<div class="catrow">
-      <span class="cat-swatch" style="background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">${c.emoji}</span>
+      <span class="cat-swatch" style="background:${c.color}"></span>
       <span class="cat-name">${esc(c.name)}${c.fixed?'<span class="cat-fixed">기본 · 삭제 불가</span>':(used?`<span class="cat-fixed">일정 ${used}개</span>`:'')}</span>
       <button class="cat-btn edit" data-edit="${c.id}" aria-label="수정"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
       <button class="cat-btn del" data-del="${c.id}" aria-label="삭제" ${c.fixed?'disabled':''}><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg></button>
@@ -558,7 +535,7 @@ function evRowHtml(e){
   const bg=e.isPrivate?'':`background:${tint(c.color,isDark())}`;
   const col=e.isPrivate?'':`color:${inkOn(c.color,isDark())}`;
   return `<div class="evrow${e.isPrivate?' priv':''}" data-id="${e.id}" style="${bg}">
-    <span class="em">${c.emoji}</span>
+    <span class="cdot" style="background:${c.color}"></span>
     <span class="nm" style="${col}">${esc(e.title)}<span class="when" style="color:${e.isPrivate?'var(--ink-faint)':inkOn(c.color,isDark())};opacity:.72">${fmtWhen(e)}</span></span>${dir}</div>`;
 }
 function byDate(a,b){return (a.date+ (a.time||'')).localeCompare(b.date+(b.time||''));}
@@ -691,7 +668,7 @@ async function loadState(){
   const [ev,cats]=await Promise.all([idbGet('events'),idbGet('categories')]);
   if(Array.isArray(cats)&&cats.length) state.categories=cats;
   if(Array.isArray(ev)) state.events=ev;          // stored (even empty) → respect it
-  else { seed(); persist(); }                     // undefined → very first run, seed once
+                                                  // first run → start with an empty calendar
 }
 async function initApp(){
   try{ await loadState(); }catch(e){ console.warn('[shareday] load failed',e); }

@@ -15,7 +15,7 @@
 .rc-ev-top{display:flex;align-items:baseline;gap:10px}
 .rc-time{font-size:12px;font-weight:600;color:var(--ink-faint);font-variant-numeric:tabular-nums;min-width:76px}
 .rc-title{font-size:14.5px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:6px}
-.rc-em{font-size:14px}
+.rc-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;display:inline-block}
 .rc-cat{font-size:11.5px;color:var(--ink-faint);margin-top:4px;padding-left:86px}
 .rc-memo{font-size:12.5px;color:var(--ink-soft);margin-top:8px;line-height:1.5;white-space:pre-wrap;
   padding-left:10px;border-left:2px solid var(--line);margin-left:2px}

@@ -14,7 +14,6 @@ export type ShareEvent = {
 export type ShareCategory = {
   id: string;
   name: string;
-  emoji?: string;
   color?: string;
 };
 
@@ -65,7 +64,6 @@ export function sanitizeCategories(input: unknown): ShareCategory[] {
       {
         id,
         name: str(c.name, 60),
-        emoji: str(c.emoji, 8),
         color: str(c.color, 32),
       },
     ];
