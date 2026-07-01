@@ -94,6 +94,7 @@ export default async function SharePage({ params }: Props) {
       categories={categories}
       allowComments={row.allow_comments}
       initialComments={comments}
+      expiresAt={row.expires_at}
     />
   );
 }
