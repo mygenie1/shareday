@@ -340,6 +340,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   .cell .dn{font-size:12px;width:21px;height:21px}
   .chips{gap:2px}
   .chip{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;align-items:unset;padding:2px 4px;gap:0;border-radius:4px;font-size:9.5px;line-height:1.18;border-left:3px solid currentColor}
+  [data-theme="dark"] .chip{border-left:none}
   .chip>span:nth-child(2){display:inline;overflow:hidden}
   .chip .lk{display:none}
   .more{font-size:9px;font-weight:700;padding:1px 2px 0 0;text-align:right}
@@ -436,6 +437,35 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .rcard-del:hover{background:var(--danger-soft);color:var(--danger)}
 .rcard-del svg{width:16px;height:16px;stroke:currentColor;stroke-width:1.7;fill:none;stroke-linecap:round;stroke-linejoin:round}
 
+/* header dropdown menu (다크모드·카테고리·내 공유 링크·받은 캘린더) */
+#menuBtn svg{width:18px;height:18px}
+.menu{position:fixed;z-index:60;min-width:236px;background:var(--panel);border:1px solid var(--line);
+  border-radius:16px;box-shadow:var(--shadow);padding:7px;opacity:0;transform:translateY(-6px) scale(.98);
+  transform-origin:top right;pointer-events:none;transition:opacity .16s ease,transform .16s ease}
+.menu.on{opacity:1;transform:translateY(0) scale(1);pointer-events:auto}
+.menu-item{display:flex;align-items:center;gap:12px;width:100%;padding:11px 12px;border-radius:11px;
+  font-size:14px;font-weight:600;color:var(--ink);text-align:left;background:none;transition:background .14s,transform .08s}
+.menu-item:hover{background:var(--line-soft)}
+.menu-item:active{transform:scale(.99)}
+.menu-item>svg{width:18px;height:18px;stroke:currentColor;stroke-width:1.7;fill:none;
+  stroke-linecap:round;stroke-linejoin:round;color:var(--ink-soft);flex-shrink:0}
+.menu-item .mi-label{flex:1}
+.menu-item .switch{pointer-events:none;flex-shrink:0}
+.menu-sep{height:1px;background:var(--line-soft);margin:6px 8px}
+
+/* day sheet (tap a date → that day's whole list) — sits under the detail card */
+#daySheetScrim{z-index:46}
+.ds-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.ds-head h2.ds-title{font-size:18px;font-weight:700;letter-spacing:-.02em;color:var(--ink);margin-bottom:0}
+.ds-title .ds-dow{font-weight:600;color:var(--ink-soft)}
+.ds-title.sun,.ds-title.sun .ds-dow{color:var(--danger)}
+.ds-title.sat,.ds-title.sat .ds-dow{color:var(--sat)}
+.ds-title.holiday,.ds-title.holiday .ds-dow{color:var(--danger)}
+.ds-hol{font-size:13px;font-weight:600;color:var(--danger)}
+.ds-count{font-size:12.5px;font-weight:600;color:var(--ink-faint)}
+.ds-list{display:flex;flex-direction:column}
+.ds-add{width:100%;justify-content:center;margin-top:14px}
+
 /* ── added for Next.js integration ── */
 .cell.holiday .dn{color:var(--danger)}
 .hol-name{font-size:9px;font-weight:700;color:var(--danger);line-height:1.1;padding:0 2px;
@@ -448,18 +478,23 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
    Scoped to [data-theme="dark"] ONLY — light mode is untouched.
    --cat (category color) is set inline per chip/pill/tag.
    ============================================================ */
-/* month chip: neutral fill + left color bar (color no longer floods the chip) */
+/* month chip: neutral fill + full category-colored outline ring
+   (inset box-shadow ⇒ crisp colored 윤곽선 with zero layout shift) */
 [data-theme="dark"] .chip{
   background:#1c1c20 !important; color:var(--ink) !important;
-  border-left:3px solid var(--cat,var(--ink-faint));
+  box-shadow:inset 0 0 0 1.5px var(--cat,var(--ink-faint));
 }
 [data-theme="dark"] .chip .lk{opacity:.5}
-/* week time block: keep its inline left bar, drop the tint fill */
-[data-theme="dark"] .tg-block{ background:#1c1c20 !important; color:var(--ink) !important; }
-/* all-day pill: neutral fill + left color bar */
+/* week time block: neutral fill + category-colored outline ring (drop inline left bar) */
+[data-theme="dark"] .tg-block{
+  background:#1c1c20 !important; color:var(--ink) !important;
+  border-left:none !important;
+  box-shadow:inset 0 0 0 1.5px var(--cat,var(--ink-faint)),0 1px 3px -1px rgba(0,0,0,.5) !important;
+}
+/* all-day pill: neutral fill + category-colored outline ring */
 [data-theme="dark"] .tg-chip{
   background:#1c1c20 !important; color:var(--ink) !important;
-  border-left:3px solid var(--cat,var(--ink-faint)); padding-left:5px;
+  box-shadow:inset 0 0 0 1.5px var(--cat,var(--ink-faint));
 }
 /* legend: neutral pill + small color dot (color+이름 both kept) */
 [data-theme="dark"] .tag{ background:var(--line-soft) !important; color:var(--ink-soft) !important; }

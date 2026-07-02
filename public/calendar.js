@@ -50,12 +50,78 @@ const isDark=()=>state.theme==='dark';
 /* ---------- theme ---------- */
 function applyTheme(){
   document.documentElement.setAttribute('data-theme',state.theme);
-  $('#themeBtn').innerHTML = isDark()
-    ? '<svg class="svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>'
-    : '<svg class="svg" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+  syncMenuTheme();                 // header menu row reflects the current mode
   renderMonth(); renderLegend();
 }
-$('#themeBtn').onclick=()=>{state.theme=isDark()?'light':'dark';try{localStorage.setItem('shareday-theme',state.theme);}catch(e){}applyTheme();};
+function toggleTheme(){
+  state.theme=isDark()?'light':'dark';
+  try{localStorage.setItem('shareday-theme',state.theme);}catch(e){}
+  applyTheme();
+}
+
+/* ---------- header menu (다크모드 · 카테고리 · 내 공유 링크 · 받은 캘린더) ---------- */
+/* Built in JS so the markup export stays clean. The header keeps only [공유][메뉴];
+   everything else lives here as an icon+label list. */
+const SUN_SVG='<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>';
+const MOON_SVG='<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>';
+function ensureMenu(){
+  if(document.getElementById('appMenu')) return;
+  const menu=document.createElement('div');
+  menu.className='menu'; menu.id='appMenu'; menu.setAttribute('role','menu');
+  menu.innerHTML=`
+    <button class="menu-item" id="miTheme" role="menuitem">
+      <svg id="menuThemeIcon" viewBox="0 0 24 24"></svg>
+      <span class="mi-label" id="menuThemeLabel">다크모드</span>
+      <span class="switch" id="menuThemeSwitch" role="switch"></span>
+    </button>
+    <div class="menu-sep"></div>
+    <button class="menu-item" id="miCats" role="menuitem">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <span class="mi-label">카테고리 관리</span>
+    </button>
+    <button class="menu-item" id="miLinks" role="menuitem">
+      <svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>
+      <span class="mi-label">내 공유 링크</span>
+    </button>
+    <button class="menu-item" id="miRecv" role="menuitem">
+      <svg viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+      <span class="mi-label">받은 캘린더</span>
+    </button>`;
+  document.body.appendChild(menu);
+  $('#miTheme').onclick=()=>toggleTheme();            // keep menu open so the switch animates
+  $('#miCats').onclick=()=>{closeMenu();openSettings();};
+  $('#miLinks').onclick=()=>{closeMenu();openShare();};
+  $('#miRecv').onclick=()=>{closeMenu();openRecv();};
+  syncMenuTheme();
+}
+function syncMenuTheme(){
+  const ic=document.getElementById('menuThemeIcon'); if(ic) ic.innerHTML=isDark()?SUN_SVG:MOON_SVG;
+  const lbl=document.getElementById('menuThemeLabel'); if(lbl) lbl.textContent=isDark()?'다크모드':'라이트모드';
+  const sw=document.getElementById('menuThemeSwitch');
+  if(sw){ sw.classList.toggle('on',isDark()); sw.setAttribute('aria-checked',isDark()); }
+}
+function openMenu(){
+  ensureMenu();
+  const menu=$('#appMenu'), btn=$('#menuBtn'); if(!btn) return;
+  const r=btn.getBoundingClientRect();
+  menu.style.top=(r.bottom+8)+'px';
+  menu.style.right=Math.max(8,window.innerWidth-r.right)+'px';
+  menu.classList.add('on'); btn.setAttribute('aria-expanded','true');
+  syncMenuTheme();
+}
+function closeMenu(){
+  const m=document.getElementById('appMenu'); if(m) m.classList.remove('on');
+  const b=$('#menuBtn'); if(b) b.setAttribute('aria-expanded','false');
+}
+$('#menuBtn').onclick=e=>{
+  e.stopPropagation();
+  const m=document.getElementById('appMenu');
+  (m&&m.classList.contains('on'))?closeMenu():openMenu();
+};
+document.addEventListener('pointerdown',e=>{
+  const m=document.getElementById('appMenu');
+  if(m&&m.classList.contains('on') && !e.target.closest('#appMenu') && !e.target.closest('#menuBtn')) closeMenu();
+});
 
 /* ---------- calendar ---------- */
 const DOW=['일','월','화','수','목','금','토'];
@@ -68,7 +134,9 @@ function tgScroller(){
   const mobile=window.matchMedia && window.matchMedia('(max-width:640px)').matches;
   return (mobile ? tl.querySelector('.tg') : tl.querySelector('.tg-scroll')) || tl.querySelector('.tg-scroll');
 }
-function reRender(preserve){ if(preserve){const s=tgScroller(); keepScroll=s?{left:s.scrollLeft,top:s.scrollTop}:null;} renderMonth(); renderTimeline(); keepScroll=null; afterMutate(); }
+function reRender(preserve){ if(preserve){const s=tgScroller(); keepScroll=s?{left:s.scrollLeft,top:s.scrollTop}:null;} renderMonth(); renderTimeline(); keepScroll=null; afterMutate(); refreshDaySheet(); }
+/* keep an open day sheet in sync after an edit/delete/date-move */
+function refreshDaySheet(){ const sc=document.getElementById('daySheetScrim'); if(sc&&sc.classList.contains('on')) openDaySheet(state.selected); }
 function renderMonth(){
   const v=state.view, y=v.getFullYear(), m=v.getMonth();
   $('#monthLabel').textContent=`${y}년 ${m+1}월`;
@@ -98,18 +166,12 @@ function renderMonth(){
       if(monthDragMoved) return;                          // just finished a drag → ignore the click
       const chip=ev.target.closest('.chip');
       if(chip){openEventDetail(chip.dataset.eid);return;} // tap an event → detail mini-card (not edit)
-      state.selected=new Date(c.dataset.date+'T00:00:00');// tap a day → show that day's list
-      state.tlMode='day'; state.tlCollapsed=false;        // reuse the timeline as the "이 날" view
+      const d=new Date(c.dataset.date+'T00:00:00');       // tap a day → that day's full list as a sheet
+      state.selected=d;                                    // focus this day (FAB/추가 default to it)
       $$('#daysGrid .cell').forEach(x=>x.classList.remove('sel'));
       c.classList.add('sel');
-      renderTimeline();
-    };
-    // desktop: double-click an EMPTY day → jump straight to new-event input for that day.
-    // (mobile double-tap is a zoom gesture, so mobile quick-add uses the "이 날에 추가" button.)
-    c.ondblclick=(ev)=>{
-      if(ev.target.closest('.chip')) return;              // a filled day just keeps the list view
-      const di=c.dataset.date;
-      if(!state.events.some(e=>e.date===di)) openEventEdit(null, di);
+      renderTimeline();                                    // keep the week view; sync its selected column
+      openDaySheet(d);                                     // the day's events rise in a bottom sheet
     };
   });
   attachMonthDrag();
@@ -266,6 +328,43 @@ function openEventDetail(id){
     : '<svg class="svg" viewBox="0 0 24 24" style="width:14px;height:14px"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg> 공개 · 공유 링크에서 보여요';
   openScrim('#dtScrim');
 }
+
+/* ---------- day sheet (tap a date → that day's whole list) ----------
+   A layer above the calendar; sits UNDER the detail card so tapping an event
+   opens the mini-card over it (see #daySheetScrim z-index in globals.css). */
+function ensureDaySheet(){
+  if(document.getElementById('daySheetScrim')) return;
+  const scrim=document.createElement('div');
+  scrim.className='scrim'; scrim.id='daySheetScrim';
+  scrim.innerHTML=`
+    <div class="sheet" role="dialog" aria-modal="true" style="max-width:440px">
+      <div class="ds-head"><h2 id="dsTitle"></h2><span class="ds-count" id="dsCount"></span></div>
+      <div class="ds-list" id="dsList"></div>
+      <button class="tl-add ds-add" id="dsAdd">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> 이 날에 추가
+      </button>
+    </div>`;
+  document.body.appendChild(scrim);
+  scrim.onclick=ev=>{ if(ev.target===scrim) closeScrim('#daySheetScrim'); };  // backdrop closes
+}
+function openDaySheet(d){
+  ensureDaySheet();
+  const di=iso(d), wd=['일','월','화','수','목','금','토'][d.getDay()], hol=HOLIDAYS[di];
+  const t=$('#dsTitle');
+  t.className='ds-title'+(hol?' holiday':d.getDay()===0?' sun':d.getDay()===6?' sat':'');
+  t.innerHTML=`${d.getMonth()+1}월 ${d.getDate()}일 <span class="ds-dow">(${wd})</span>`+(hol?` <span class="ds-hol">· ${esc(hol)}</span>`:'');
+  const evs=state.events.filter(e=>e.date===di).sort((a,b)=>(a.time||'99').localeCompare(b.time||'99'));
+  $('#dsCount').textContent=evs.length?`일정 ${evs.length}개`:'';
+  const list=$('#dsList');
+  if(evs.length){
+    list.innerHTML=evs.map(rowHtml).join('');            // same row look as the timeline
+    list.querySelectorAll('.tl-row[data-eid]').forEach(r=>r.onclick=()=>openEventDetail(r.dataset.eid));
+  }else{
+    list.innerHTML=`<div class="tl-empty">이 날은 아직 일정이 없어요. + 로 추가해보세요.</div>`;
+  }
+  $('#dsAdd').onclick=()=>{ closeScrim('#daySheetScrim'); openEventEdit(null, di); };
+  openScrim('#daySheetScrim');
+}
 function renderCatPick(){
   const sel=state.form.catId;
   $('#catPick').innerHTML=state.categories.map(c=>
@@ -362,13 +461,19 @@ function renderTimeline(){
     const WD=['일','월','화','수','목','금','토'];
     const days=[]; for(let i=0;i<7;i++){const d=new Date(s);d.setDate(s.getDate()+i);days.push(d);}
 
-    // decide the visible hour window from actual events (fallback 8–20)
+    // Visible hour window hugs the week's actual events: earliest start −1h to
+    // latest end +2h (room to drag). No events → a compact 09–18 default. Hours
+    // outside the window are still reachable by scrolling.
     const timed=state.events.filter(e=>{const di=e.date;return e.time && days.some(d=>iso(d)===di);});
-    let minH=8,maxH=20;
-    timed.forEach(e=>{const sh=+e.time.split(':')[0];
-      const eh=e.end?Math.ceil(timeToMin(e.end)/60):sh+1;
-      if(sh<minH)minH=sh; if(eh>maxH)maxH=eh;});
-    minH=Math.max(0,minH-1); maxH=Math.min(24,maxH+1);
+    let minH,maxH;
+    if(timed.length){
+      let lo=24,hi=0;
+      timed.forEach(e=>{const sh=+e.time.split(':')[0];
+        const eh=e.end?Math.ceil(timeToMin(e.end)/60):sh+1;
+        if(sh<lo)lo=sh; if(eh>hi)hi=eh;});
+      minH=Math.max(0,lo-1); maxH=Math.min(24,hi+2);
+    }else{ minH=9; maxH=18; }
+    if(maxH-minH<4){ maxH=Math.min(24,minH+4); minH=Math.max(0,maxH-4); }  // keep a sane minimum height
     const HOURS=maxH-minH, PXH=40;                 // px per hour
 
     // header row: weekday + date
@@ -410,7 +515,7 @@ function renderTimeline(){
         const showEnd=h>=34;
         return `<div class="tg-block" data-eid="${e.id}" data-date="${di}" tabindex="0"
           style="top:${top}px;height:${h}px;left:${left}%;width:calc(${w}% - 3px);
-          background:${tint(c.color,isDark())};border-left:3px solid ${c.color};color:${inkOn(c.color,isDark())}">
+          --cat:${c.color};background:${tint(c.color,isDark())};border-left:3px solid ${c.color};color:${inkOn(c.color,isDark())}">
           <span class="tg-grip tg-grip-top" data-grip="top"></span>
           <span class="tg-bt">${e.time}${showEnd&&e.end?'–'+e.end:''}</span>
           <span class="tg-bn">${esc(e.title)}${e.memo?' <svg class="svg" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.2;display:inline;vertical-align:baseline"><path d="M4 6h16M4 12h16M4 18h10"/></svg>':''}${e.isPrivate?' <svg class="svg lk" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.4"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}</span>
@@ -611,7 +716,6 @@ function deleteCategory(id){
   renderCatList();renderLegend();renderCatPick();renderMonth();renderTimeline();afterMutate();
   toast(used?`'${c.name}' 삭제 · 일정 ${used}개는 '기타'로 옮겼어요`:`'${c.name}'를 삭제했어요`);
 }
-$('#settingsBtn').onclick=openSettings;
 $('#setAddCat').onclick=()=>{closeScrim('#setScrim');openCatBuilder(null,true);};
 $('#setDone').onclick=()=>closeScrim('#setScrim');
 
@@ -678,7 +782,7 @@ $('#shareBtn').onclick=openShare;   // the sheet body + its controls are wired i
 function openScrim(s){$(s).classList.add('on');}
 function closeScrim(s){$(s).classList.remove('on');}
 $$('.scrim').forEach(sc=>sc.onclick=e=>{if(e.target===sc)sc.classList.remove('on');});
-document.addEventListener('keydown',e=>{if(e.key==='Escape')$$('.scrim.on').forEach(s=>s.classList.remove('on'));});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){$$('.scrim.on').forEach(s=>s.classList.remove('on'));closeMenu();}});
 
 /* ---------- toast ---------- */
 let tT;
@@ -971,17 +1075,6 @@ function fmtSavedDate(ms){
   const d=new Date(ms); if(isNaN(d.getTime())) return '';
   return `${d.getFullYear()}.${d.getMonth()+1}.${d.getDate()}`;
 }
-/* inject a "받은 캘린더" button into the header, left of 공유 (keeps markup export clean) */
-function ensureInboxBtn(){
-  if(document.getElementById('recvBtn')) return;
-  const actions=document.querySelector('.top-actions'); const shareBtn=$('#shareBtn');
-  if(!actions||!shareBtn) return;
-  const b=document.createElement('button');
-  b.className='btn icn'; b.id='recvBtn'; b.setAttribute('aria-label','받은 캘린더');
-  b.innerHTML='<svg class="svg" viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
-  actions.insertBefore(b, shareBtn);
-  b.onclick=openRecv;
-}
 function buildRecvSheet(){
   if(document.getElementById('recvScrim')) return;
   const scrim=document.createElement('div');
@@ -1077,7 +1170,7 @@ async function loadState(){
 }
 async function initApp(){
   try{ await loadState(); }catch(e){ console.warn('[shareday] load failed',e); }
-  ensureInboxBtn();                               // "받은 캘린더" entry in the header
+  ensureMenu();                                   // header menu (다크모드·카테고리·공유 링크·받은 캘린더)
   renderDow(); applyTheme(); renderTimeline();
 }
 initApp();
