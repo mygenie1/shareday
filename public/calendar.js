@@ -79,14 +79,24 @@ function renderMonth(){
       <div class="chips">${chips}${extra>0?`<div class="more">+${extra}</div>`:''}</div></div>`;
   }
   $('#daysGrid').innerHTML=html;
-  $$('#daysGrid .cell').forEach(c=>c.onclick=(ev)=>{
-    if(monthDragMoved) return;                          // just finished a drag → ignore the click
-    const chip=ev.target.closest('.chip');
-    if(chip){openEvent(chip.dataset.eid);return;}      // tap an event → edit it
-    state.selected=new Date(c.dataset.date+'T00:00:00');// tap a day → focus timeline
-    $$('#daysGrid .cell').forEach(x=>x.classList.remove('sel'));
-    c.classList.add('sel');
-    renderTimeline();
+  $$('#daysGrid .cell').forEach(c=>{
+    c.onclick=(ev)=>{
+      if(monthDragMoved) return;                          // just finished a drag → ignore the click
+      const chip=ev.target.closest('.chip');
+      if(chip){openEvent(chip.dataset.eid);return;}       // tap an event → edit it
+      state.selected=new Date(c.dataset.date+'T00:00:00');// tap a day → show that day's list
+      state.tlMode='day'; state.tlCollapsed=false;        // reuse the timeline as the "이 날" view
+      $$('#daysGrid .cell').forEach(x=>x.classList.remove('sel'));
+      c.classList.add('sel');
+      renderTimeline();
+    };
+    // desktop: double-click an EMPTY day → jump straight to new-event input for that day.
+    // (mobile double-tap is a zoom gesture, so mobile quick-add uses the "이 날에 추가" button.)
+    c.ondblclick=(ev)=>{
+      if(ev.target.closest('.chip')) return;              // a filled day just keeps the list view
+      const di=c.dataset.date;
+      if(!state.events.some(e=>e.date===di)) openEvent(null, di);
+    };
   });
   attachMonthDrag();
 }
@@ -163,7 +173,27 @@ function openEvent(id,presetDate){
   sw.setAttribute('aria-checked',state.form.isPrivate);
   $('#evDelete').style.display=e?'block':'none';
   renderCatPick();
+  buildQuickTime();
   openScrim('#evScrim'); setTimeout(()=>$('#fTitle').focus(),120);
+}
+/* quick time-of-day pills above 시작/종료 — a fast starting point, since the OS
+   time picker itself can't be changed. Injected once (keeps the markup export clean). */
+function buildQuickTime(){
+  const row2=document.querySelector('#evScrim .row2');
+  if(!row2 || document.getElementById('timeQuick')) return;
+  const wrap=document.createElement('div');
+  wrap.className='field'; wrap.style.marginBottom='10px';
+  wrap.innerHTML='<label>빠른 시간</label>'+
+    '<div class="timeq" id="timeQuick">'+
+      '<button type="button" data-s="08:00" data-e="09:00">아침</button>'+
+      '<button type="button" data-s="12:00" data-e="13:00">점심</button>'+
+      '<button type="button" data-s="18:00" data-e="19:00">저녁</button>'+
+    '</div>';
+  row2.parentNode.insertBefore(wrap, row2);           // sits just above the 시작 input
+  $$('#timeQuick button').forEach(b=>b.onclick=()=>{
+    $('#fTime').value=b.dataset.s; $('#fEnd').value=b.dataset.e;
+    state.form.endTouched=false;                       // let 종료 follow if 시작 is changed after
+  });
 }
 function renderCatPick(){
   const sel=state.form.catId;
@@ -249,9 +279,11 @@ function renderTimeline(){
     tt.className='tl-title'+(selHol?' holiday':selDow===0?' sun':selDow===6?' sat':'');
     tt.innerHTML=esc(dayLabel(state.selected,today))+(selHol?` <span class="tl-holname">· ${esc(selHol)}</span>`:'');
     const evs=state.events.filter(e=>e.date===di).sort(byT);
-    $('#tlBody').innerHTML=evs.length
+    $('#tlBody').innerHTML=(evs.length
       ? evs.map(rowHtml).join('')
-      : `<div class="tl-empty">이 날은 일정이 없어요. ＋로 추가할 수 있어요.</div>`;
+      : `<div class="tl-empty">이 날은 일정이 없어요.</div>`)
+      + `<button class="tl-add" id="tlAdd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> 이 날에 추가</button>`;
+    const addBtn=$('#tlAdd'); if(addBtn) addBtn.onclick=()=>openEvent(null, iso(state.selected));
   }else{
     const [s,e0]=weekRange(state.selected);
     $('#tlTitle').textContent=`${s.getMonth()+1}.${s.getDate()} – ${e0.getMonth()+1}.${e0.getDate()} 주간`;
@@ -512,13 +544,26 @@ $('#settingsBtn').onclick=openSettings;
 $('#setAddCat').onclick=()=>{closeScrim('#setScrim');openCatBuilder(null,true);};
 $('#setDone').onclick=()=>closeScrim('#setScrim');
 
-/* ---------- share sheet with two zones + global sync ---------- */
-let shareExp=30, shareCmt=true;
-function openShare(){renderZones();renderWarn();openScrim('#shScrim');ensureShareLink();renderInbox();}
+/* ---------- share sheet: create multiple links + manage the list ---------- */
+/* No accounts: "ownership" = holding the token. state.shareLinks (in IndexedDB)
+   is the creator's private list of links they made, so they can revisit each
+   link's status and the comments it received. Public/private is one global flag
+   per event, so every live link necessarily shows the same public set — and each
+   toggle is pushed to ALL live links, so a private event can't linger anywhere. */
+let createExp=30, createCmt=true;   // settings for the NEXT link to be created
+function autoLinkName(){const d=new Date();return `${d.getMonth()+1}월 ${d.getDate()}일 공유`;}
+function openShare(){
+  buildShareSheet();                 // (re)build sheet body so ids + handlers are fresh
+  renderZones(); renderWarn();
+  $('#shName').value=''; $('#shName').placeholder=autoLinkName();
+  $('#newLinkWrap').innerHTML='';
+  openScrim('#shScrim');
+  renderLinks();
+}
 function renderWarn(){
-  $('#warnBox').innerHTML = state.share.token
+  $('#warnBox').innerHTML = state.shareLinks.some(isLinkLive)
     ? `<div class="warn"><svg viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.3 3.9l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3L13.7 4a2 2 0 0 0-3.4 0z"/></svg>
-        프라이빗으로 내리면 공유 중인 이 링크에서도 함께 숨겨져요.</div>` : '';
+        프라이빗으로 내리면 지금 살아있는 모든 링크에서도 함께 숨겨져요.</div>` : '';
 }
 function fmtWhen(e){
   const [y,m,d]=e.date.split('-').map(Number);
@@ -556,13 +601,7 @@ function toggleVis(row){
     toast(e.isPrivate?'프라이빗으로 내렸어요':'공개로 올렸어요');
   },300);
 }
-$('#shareBtn').onclick=openShare;
-$('#shDone').onclick=()=>closeScrim('#shScrim');
-$('#copyBtn').onclick=()=>{const url=state.share.url||$('#linkText').textContent;navigator.clipboard&&navigator.clipboard.writeText(url);toast('링크를 복사했어요');};
-$('#revokeBtn').onclick=async()=>{ const ok=await showConfirm({title:'링크 폐기', msg:'폐기하면 받은 사람이 더 이상 이 링크를 열 수 없어요. 폐기할까요?', okLabel:'폐기'}); if(!ok) return; await revokeShareLink(); closeScrim('#shScrim');toast('링크를 폐기했어요');};
-$('#previewBtn').onclick=async()=>{ await ensureShareLink(); if(state.share.url) window.open(state.share.url,'_blank','noopener'); else toast('먼저 공유 링크를 만들어 주세요'); };
-$$('#expSeg button').forEach(b=>b.onclick=()=>{$$('#expSeg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');shareExp=+b.dataset.d;syncShareIfLive();});
-$('#cmtSwitch').onclick=function(){shareCmt=!shareCmt;this.classList.toggle('on',shareCmt);this.setAttribute('aria-checked',shareCmt);syncShareIfLive();};
+$('#shareBtn').onclick=openShare;   // the sheet body + its controls are wired in buildShareSheet()
 
 /* ---------- scrim util ---------- */
 function openScrim(s){$(s).classList.add('on');}
@@ -600,123 +639,254 @@ let persistT;
 function persist(){clearTimeout(persistT);persistT=setTimeout(()=>{
   idbSet('events',state.events); idbSet('categories',state.categories);
 },250);}
-/* called after every change: save locally + push the public snapshot to a live link */
-function afterMutate(){ persist(); syncShareIfLive(); }
+/* called after every change: save locally + push the public snapshot to every live link */
+function afterMutate(){ persist(); syncAllLive(); }
 
-/* ---------- share link (public snapshot only) ---------- */
-state.share={token:null,url:null,syncing:false};
-/* Tokens this device has created. There are no accounts, so "ownership" is just
-   "you hold the token" — anyone with the token can read/comment. This local list
-   is only a convenience so the creator can revisit comments on links they made. */
-state.shareLinks=[];      // [{token,url,createdAt}], newest last
-state.cmtSeenAt=0;        // last time the owner viewed the inbox → drives the "새 N" badge
-function publicPayload(){
+/* ---------- share links: one server row per link, all owned by this device ---------- */
+state.shareLinks=[];   // [{token,url,name,createdAt,expiresAt,allowComments,revoked,count}], newest last
+state.cmtSeenAt=0;     // last time the owner viewed comments → drives the "새 N" badge
+function saveShareLinks(){ idbSet('shareLinks', state.shareLinks); }
+function publicEvents(){ return state.events.filter(e=>!e.isPrivate); }  // client pre-filter; server re-filters too
+/* payload for ONE link — carries that link's own expiry + comment pref so a sync
+   never clobbers them. expiresAt is fixed at creation, so it doesn't slide forward. */
+function linkPayload(l){
   return {
-    events: state.events.filter(e=>!e.isPrivate),   // client-side pre-filter; server re-filters too
+    events: publicEvents(),
     categories: state.categories,
-    allowComments: shareCmt,
-    expiresDays: shareExp,
+    allowComments: l.allowComments!==false,
+    expiresAt: l.expiresAt||null,
   };
 }
-async function ensureShareLink(){
-  if(state.share.token) return syncShareIfLive();
-  if(state.share.syncing) return;
-  state.share.syncing=true;
-  $('#linkText').textContent='링크 만드는 중…';
-  try{
-    const res=await fetch('/api/share',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(publicPayload())});
-    const data=await res.json();
-    if(res.ok){ state.share.token=data.token; state.share.url=data.url; $('#linkText').textContent=data.url; rememberShareLink(data.token,data.url); }
-    else { $('#linkText').textContent='링크 생성 실패'; toast('링크를 만들지 못했어요'); }
-  }catch(e){ $('#linkText').textContent='링크 생성 실패'; toast('네트워크 오류예요'); }
-  finally{ state.share.syncing=false; renderWarn(); }
+function isLinkLive(l){
+  if(l.revoked) return false;
+  if(l.expiresAt && new Date(l.expiresAt).getTime()<=Date.now()) return false;
+  return true;
 }
-/* serialize updates so rapid changes can't lose the latest snapshot */
+function linkStatus(l){
+  if(l.revoked) return {kind:'revoked',label:'폐기됨'};
+  if(l.expiresAt && new Date(l.expiresAt).getTime()<=Date.now()) return {kind:'expired',label:'만료됨'};
+  if(!l.expiresAt) return {kind:'live',label:'무기한'};
+  const days=Math.ceil((new Date(l.expiresAt).getTime()-Date.now())/86400000);
+  return {kind:'live',label:'D-'+Math.max(0,days)};
+}
+async function createShareLink(){
+  const name=$('#shName').value.trim()||autoLinkName();
+  const btn=$('#createLinkBtn'); if(btn.disabled) return;
+  btn.disabled=true; const prev=btn.innerHTML; btn.textContent='만드는 중…';
+  try{
+    const res=await fetch('/api/share',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({events:publicEvents(),categories:state.categories,allowComments:createCmt,expiresDays:createExp})});
+    const data=await res.json();
+    if(res.ok){
+      const link={token:data.token,url:data.url,name,createdAt:Date.now(),
+        expiresAt:createExp>0?new Date(Date.now()+createExp*86400000).toISOString():null,
+        allowComments:createCmt,revoked:false,count:data.count};
+      state.shareLinks.push(link); saveShareLinks();
+      $('#shName').value=''; showNewLink(link); renderLinks(); renderWarn();
+      toast('공유 링크를 만들었어요');
+    }else toast('링크를 만들지 못했어요');
+  }catch(e){ toast('네트워크 오류예요'); }
+  finally{ btn.disabled=false; btn.innerHTML=prev; }
+}
+/* push the current public snapshot to one existing link (PUT keeps its token). */
+async function pushLink(l){
+  try{
+    const res=await fetch('/api/share/'+encodeURIComponent(l.token),
+      {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(linkPayload(l))});
+    if(res.ok){ const d=await res.json(); l.url=d.url; l.count=d.count; }
+  }catch(e){}
+}
+/* after any change: push to every live link so private events vanish everywhere. */
 let shareChain=Promise.resolve();
-function syncShareIfLive(){
-  if(!state.share.token) return Promise.resolve();
-  shareChain=shareChain.then(async()=>{
-    if(!state.share.token) return;
-    try{
-      const res=await fetch('/api/share/'+encodeURIComponent(state.share.token),
-        {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(publicPayload())});
-      if(res.ok){ const data=await res.json(); state.share.url=data.url; $('#linkText').textContent=data.url; }
-    }catch(e){}
-  });
+function syncAllLive(){
+  const live=state.shareLinks.filter(isLinkLive);
+  if(!live.length) return Promise.resolve();
+  shareChain=shareChain.then(async()=>{ await Promise.all(live.map(pushLink)); saveShareLinks(); });
   return shareChain;
 }
-async function revokeShareLink(){
-  const tok=state.share.token; if(!tok) return;
-  state.share.token=null; state.share.url=null;
-  $('#linkText').textContent='shareday.app/s/…'; renderWarn();
-  forgetShareLink(tok);
-  try{ await fetch('/api/share/'+encodeURIComponent(tok),{method:'DELETE'}); }catch(e){}
+async function revokeLink(token){
+  const l=state.shareLinks.find(x=>x.token===token); if(!l) return;
+  const ok=await showConfirm({title:'링크 폐기', msg:`'${l.name||autoLinkName()}' 링크를 폐기하면 받은 사람이 더 이상 열 수 없어요. 폐기할까요?`, okLabel:'폐기'});
+  if(!ok) return;
+  l.revoked=true; saveShareLinks(); renderLinks(); renderWarn();
+  try{ await fetch('/api/share/'+encodeURIComponent(token),{method:'DELETE'}); }catch(e){}
+  toast('링크를 폐기했어요');
 }
 
-/* ---------- owner-side comment inbox (read-only) ---------- */
-function saveShareLinks(){ idbSet('shareLinks', state.shareLinks); }
-function rememberShareLink(token,url){
-  if(!token) return;
-  if(state.shareLinks.some(l=>l.token===token)){ renderInbox(); return; }
-  state.shareLinks.push({token,url,createdAt:Date.now()});
-  saveShareLinks(); renderInbox();
+/* ---------- share sheet body (built in JS so we never touch the markup export) ---------- */
+function buildShareSheet(){
+  const sheet=document.querySelector('#shScrim .sheet'); if(!sheet) return;
+  sheet.innerHTML=`
+    <h2>공개 캘린더 공유</h2>
+    <p class="sub">공개된 일정만 링크에 담겨요. 프라이빗으로 내린 건 살아있는 모든 링크에서 함께 숨겨집니다.</p>
+    <div id="warnBox"></div>
+    <div class="zone-h pub"><svg class="svg" viewBox="0 0 24 24" style="width:15px;height:15px"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg> 공개됨 <span class="cnt" id="pubCnt"></span></div>
+    <div id="pubZone"></div>
+    <hr class="divider">
+    <div class="zone-h priv"><svg class="svg" viewBox="0 0 24 24" style="width:15px;height:15px"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg> 프라이빗 <span class="cnt" id="privCnt"></span></div>
+    <div id="privZone"></div>
+    <div class="field" style="margin-top:12px;margin-bottom:14px">
+      <label for="shName">링크 이름</label>
+      <input class="inp" id="shName" placeholder="예: 가족용" autocomplete="off">
+    </div>
+    <label style="display:block;font-size:12.5px;color:var(--ink-soft);font-weight:600;margin-bottom:8px">만료</label>
+    <div class="seg" id="expSeg">
+      <button data-d="7">7일</button><button data-d="30" class="on">30일</button>
+      <button data-d="90">90일</button><button data-d="0">무기한</button>
+    </div>
+    <div class="togline">
+      <span><svg class="svg" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> 코멘트 허용</span>
+      <div class="switch on" id="cmtSwitch" role="switch" aria-checked="true"></div>
+    </div>
+    <button class="btn solid" id="createLinkBtn" style="width:100%;height:46px;justify-content:center;margin-top:14px">
+      <svg class="svg" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M12 5v14M5 12h14"/></svg> 새 공유 링크 만들기
+    </button>
+    <div id="newLinkWrap"></div>
+    <div class="links-sec">
+      <div class="inbox-h">내 공유 링크 <span class="inbox-cnt" id="linksCnt"></span></div>
+      <div id="linksList"></div>
+    </div>
+    <div class="sheet-actions"><button class="btn solid" id="shDone" style="flex:1">완료</button></div>`;
+  wireShareSheet();
 }
-function forgetShareLink(token){
-  state.shareLinks=state.shareLinks.filter(l=>l.token!==token);
-  saveShareLinks(); renderInbox();
+function wireShareSheet(){
+  $('#createLinkBtn').onclick=createShareLink;
+  $('#shDone').onclick=()=>closeScrim('#shScrim');
+  $$('#expSeg button').forEach(b=>{ b.classList.toggle('on', +b.dataset.d===createExp);
+    b.onclick=()=>{$$('#expSeg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');createExp=+b.dataset.d;}; });
+  const cs=$('#cmtSwitch'); cs.classList.toggle('on',createCmt); cs.setAttribute('aria-checked',createCmt);
+  cs.onclick=function(){createCmt=!createCmt;this.classList.toggle('on',createCmt);this.setAttribute('aria-checked',createCmt);};
 }
+function copyText(t){ if(navigator.clipboard) navigator.clipboard.writeText(t); toast('링크를 복사했어요'); }
+function showNewLink(link){
+  const w=$('#newLinkWrap'); if(!w) return;
+  w.innerHTML=`<div class="newlink"><span class="newlink-lbl">방금 만든 링크</span>
+    <div class="linkbar" style="margin:8px 0 0"><code>${esc(link.url)}</code>
+      <button class="btn ghost icn" id="newLinkCopy" aria-label="링크 복사"><svg class="svg" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button></div></div>`;
+  $('#newLinkCopy').onclick=()=>copyText(link.url);
+}
+
+/* ---------- "내 공유 링크" list: status · copy · expiry · revoke · received comments ---------- */
 function fmtCmtTime(iso){
   const d=new Date(iso); if(isNaN(d.getTime())) return '';
   const p=n=>String(n).padStart(2,'0');
   return `${d.getMonth()+1}.${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-/* insert the inbox container into the share sheet, just above the action row */
-function ensureInboxEl(){
-  let el=document.getElementById('cmtInbox');
-  if(el) return el;
-  const sheet=document.querySelector('#shScrim .sheet');
-  if(!sheet) return null;
-  el=document.createElement('div'); el.id='cmtInbox'; el.className='cmt-inbox';
-  const actions=sheet.querySelector('.sheet-actions');
-  sheet.insertBefore(el, actions);
-  return el;
+const CMT_SVG='<svg class="svg" viewBox="0 0 24 24" style="width:13px;height:13px;display:inline;vertical-align:-2px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+function cardShell(l){
+  const st=linkStatus(l), live=st.kind==='live', revoked=!!l.revoked, dead=!live;
+  const name=esc(l.name||autoLinkName());
+  const pencil='<svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+  return `<div class="lcard${dead?' dead':''}" data-token="${l.token}">
+    <div class="lcard-name-row"><span class="lcard-name">${name}</span>
+      ${revoked?'':`<button class="lcard-rename" data-rename aria-label="이름 수정">${pencil}</button>`}</div>
+    <div class="lcard-meta">
+      <span class="lbadge ${st.kind}">${st.label}</span>
+      <span class="lmeta-sep">·</span>공개 <span data-count>${l.count!=null?l.count:'—'}</span>
+      <span class="lmeta-sep">·</span><span class="lmeta-cmt" data-cmtcount>${dead?CMT_SVG+' 0':CMT_SVG+' …'}</span>
+    </div>
+    <div class="lcard-actions">
+      <button data-act="copy"${live?'':' disabled'}>링크 복사</button>
+      <button data-act="open"${live?'':' disabled'}>열기</button>
+      ${revoked?'':'<button data-act="expiry">만료 수정</button>'}
+      ${revoked?'':'<button data-act="revoke" class="danger">폐기</button>'}
+      <button data-act="toggle">코멘트 보기</button>
+    </div>
+    <div class="lcard-cmts" hidden><p class="lc-note">불러오는 중…</p></div>
+  </div>`;
 }
-async function renderInbox(){
-  const el=ensureInboxEl(); if(!el) return;
-  const links=state.shareLinks||[];
-  if(!links.length){ el.innerHTML=''; return; }   // never shared → nothing to show
-  el.innerHTML='<div class="inbox-h">받은 코멘트 <span class="inbox-cnt" id="inboxCnt"></span></div>'+
-               '<div class="inbox-body" id="inboxBody"><p class="inbox-empty">불러오는 중…</p></div>';
-  const seenAt=state.cmtSeenAt||0;
-  // fetch each live link's snapshot (for titles) + its comments; revoked/expired links drop out
-  const results=await Promise.all(links.map(async l=>{
-    try{
-      const [snapRes,cmtRes]=await Promise.all([
-        fetch('/api/share/'+encodeURIComponent(l.token)),
-        fetch('/api/share/'+encodeURIComponent(l.token)+'/comments'),
-      ]);
-      if(!snapRes.ok||!cmtRes.ok) return null;
-      const snap=await snapRes.json(), cmt=await cmtRes.json();
-      const titles={}; (snap.events||[]).forEach(e=>{titles[e.id]=e.title;});
-      return (cmt.comments||[]).map(c=>({...c,title:titles[c.event_id]||'(삭제된 일정)'}));
-    }catch(e){ return null; }
-  }));
-  const all=results.filter(Boolean).flat()
-    .sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')));
-  const body=document.getElementById('inboxBody'), cntEl=document.getElementById('inboxCnt');
-  if(!body) return;
-  const fresh=all.filter(c=>new Date(c.created_at).getTime()>seenAt).length;
-  if(!all.length){
-    body.innerHTML='<p class="inbox-empty">아직 받은 코멘트가 없어요.</p>';
-    if(cntEl) cntEl.textContent='';
-  }else{
-    if(cntEl) cntEl.innerHTML='· '+all.length+(fresh?' <span class="inbox-new">새 '+fresh+'</span>':'');
-    body.innerHTML=all.map(c=>`<div class="inbox-row">
-      <div class="inbox-top"><span class="inbox-title">${esc(c.title)}</span><span class="inbox-time">${fmtCmtTime(c.created_at)}</span></div>
-      <div class="inbox-cmt"><b>${esc(c.author_name)}</b> ${esc(c.body)}</div></div>`).join('');
+function wireLinkCards(){
+  $$('#linksList .lcard').forEach(card=>{
+    const token=card.dataset.token;
+    const l=state.shareLinks.find(x=>x.token===token); if(!l) return;
+    card.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>{
+      const act=b.dataset.act;
+      if(act==='copy') copyText(l.url);
+      else if(act==='open'){ if(l.url) window.open(l.url,'_blank','noopener'); }
+      else if(act==='expiry') editExpiry(token,card);
+      else if(act==='revoke') revokeLink(token);
+      else if(act==='toggle'){
+        const body=card.querySelector('.lcard-cmts'), closed=body.hasAttribute('hidden');
+        if(closed){ body.removeAttribute('hidden'); b.textContent='코멘트 접기'; }
+        else { body.setAttribute('hidden',''); b.textContent='코멘트 보기'; }
+      }
+    });
+    const rn=card.querySelector('[data-rename]'); if(rn) rn.onclick=()=>startRename(token,card);
+  });
+}
+/* rename in place — no accounts, so the name is just a local label for the owner */
+function startRename(token,card){
+  const l=state.shareLinks.find(x=>x.token===token); if(!l) return;
+  const nameEl=card.querySelector('.lcard-name'); if(!nameEl) return;
+  const input=document.createElement('input');
+  input.className='inp lcard-name-input'; input.value=l.name||autoLinkName();
+  nameEl.replaceWith(input); input.focus(); input.select();
+  let done=false;
+  const commit=()=>{ if(done) return; done=true; const v=input.value.trim(); l.name=v||l.name||autoLinkName(); saveShareLinks(); renderLinks(); };
+  input.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();commit();} else if(e.key==='Escape'){done=true;renderLinks();} });
+  input.addEventListener('blur',commit);
+}
+/* re-date a link inline; PUT (where revoked=false) also revives an only-expired link */
+function editExpiry(token,card){
+  const l=state.shareLinks.find(x=>x.token===token); if(!l) return;
+  const existing=card.querySelector('.lcard-expiry');
+  if(existing){ existing.remove(); return; }
+  const box=document.createElement('div'); box.className='lcard-expiry';
+  box.innerHTML='<span class="lexp-lbl">만료 다시 정하기</span><div class="seg">'+
+    [['7','7일'],['30','30일'],['90','90일'],['0','무기한']].map(([d,t])=>`<button data-d="${d}">${t}</button>`).join('')+'</div>';
+  card.querySelector('.lcard-actions').after(box);
+  box.querySelectorAll('.seg button').forEach(b=>b.onclick=async()=>{
+    const days=+b.dataset.d;
+    l.expiresAt = days>0 ? new Date(Date.now()+days*86400000).toISOString() : null;
+    saveShareLinks();
+    await pushLink(l);
+    renderLinks(); renderWarn();
+    toast('만료를 바꿨어요');
+  });
+}
+async function renderLinks(){
+  const list=$('#linksList'); if(!list) return;
+  const links=[...state.shareLinks].reverse();   // newest first
+  $('#linksCnt').textContent = links.length ? ('· '+links.length) : '';
+  if(!links.length){ list.innerHTML='<p class="links-empty">아직 만든 공유 링크가 없어요. 위에서 새로 만들어 보세요.</p>'; return; }
+  list.innerHTML=links.map(cardShell).join('');
+  wireLinkCards();
+  const seenAt=state.cmtSeenAt||0;               // capture BEFORE we reset it below
+  await Promise.all(links.map(l=>fillLinkCard(l,seenAt)));
+  state.cmtSeenAt=Date.now(); idbSet('cmtSeenAt',state.cmtSeenAt);   // opening the list = read
+}
+/* live links: fetch the snapshot (public count + titles) and comments; dead links can't be read */
+async function fillLinkCard(l,seenAt){
+  const card=document.querySelector('#linksList .lcard[data-token="'+l.token+'"]'); if(!card) return;
+  const badge=card.querySelector('[data-cmtcount]'), body=card.querySelector('.lcard-cmts');
+  if(!isLinkLive(l)){
+    if(badge) badge.innerHTML=CMT_SVG+' 0';
+    if(body) body.innerHTML='<p class="lc-note">폐기·만료된 링크라 코멘트를 볼 수 없어요.</p>';
+    return;
   }
-  // opening the inbox counts as reading → reset the "new" baseline
-  state.cmtSeenAt=Date.now(); idbSet('cmtSeenAt',state.cmtSeenAt);
+  try{
+    const [snapRes,cmtRes]=await Promise.all([
+      fetch('/api/share/'+encodeURIComponent(l.token)),
+      fetch('/api/share/'+encodeURIComponent(l.token)+'/comments'),
+    ]);
+    let titles={};
+    if(snapRes.ok){ const snap=await snapRes.json(); l.count=(snap.events||[]).length;
+      const cntEl=card.querySelector('[data-count]'); if(cntEl) cntEl.textContent=l.count;
+      (snap.events||[]).forEach(e=>titles[e.id]=e.title); }
+    let comments=[];
+    if(cmtRes.ok){ const c=await cmtRes.json(); comments=c.comments||[]; }
+    comments.sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')));  // newest first
+    const fresh=comments.filter(c=>new Date(c.created_at).getTime()>seenAt).length;
+    if(badge) badge.innerHTML=CMT_SVG+' '+comments.length+(fresh?` <span class="inbox-new">새 ${fresh}</span>`:'');
+    if(body){
+      body.innerHTML = comments.length
+        ? comments.map(c=>`<div class="lc-row">
+            <div class="lc-top"><span class="lc-title">${esc(titles[c.event_id]||'(삭제된 일정)')}</span><span class="lc-time">${fmtCmtTime(c.created_at)}</span></div>
+            <div class="lc-cmt"><b>${esc(c.author_name)}</b> ${esc(c.body)}</div></div>`).join('')
+        : '<p class="lc-note">아직 받은 코멘트가 없어요.</p>';
+    }
+    saveShareLinks();   // persist the refreshed count
+  }catch(e){}
 }
 
 /* ---------- holidays (server-cached) ---------- */
