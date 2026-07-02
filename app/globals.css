@@ -7,11 +7,12 @@
   --radius:16px;
 }
 [data-theme="dark"]{
-  --bg:#0C1712; --panel:#17271F; --ink:#EBF4EF; --ink-soft:#9FBEAF; --ink-faint:#6A8375;
-  --line:#283D33; --line-soft:#1C2C24; --accent:#34D399; --accent-2:#6EE7B7; --accent-soft:#183429;
-  --danger:#F0836B; --danger-soft:#331F1A; --sat:#6AA8FF;
-  --shadow:0 1px 2px rgba(0,0,0,.4),0 16px 40px -14px rgba(0,0,0,.66);
-  --shadow-soft:0 1px 2px rgba(0,0,0,.34),0 6px 18px -8px rgba(0,0,0,.5);
+  /* OLED pure-black: deep background · crisp text · restrained color */
+  --bg:#000000; --panel:#101012; --ink:#F2F2F4; --ink-soft:#9A9AA0; --ink-faint:#5A5A60;
+  --line:#242428; --line-soft:#161618; --accent:#7FB79B; --accent-2:#A3CFBB; --accent-soft:#14231C;
+  --danger:#F26D5B; --danger-soft:#2A1512; --sat:#6AA8FF;
+  --shadow:0 1px 2px rgba(0,0,0,.5),0 16px 40px -16px rgba(0,0,0,.8);
+  --shadow-soft:0 1px 2px rgba(0,0,0,.4),0 6px 18px -8px rgba(0,0,0,.6);
 }
 *{box-sizing:border-box;margin:0;padding:0}
 /* theme-aware scrollbars */
@@ -440,3 +441,34 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .hol-name{font-size:9px;font-weight:700;color:var(--danger);line-height:1.1;padding:0 2px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:480px){.hol-name{display:none}}
+
+/* ============================================================
+   DARK (OLED) redesign — color moves to a LEFT BAR on a neutral
+   fill; grid lines fade; dates get crisp contrast.
+   Scoped to [data-theme="dark"] ONLY — light mode is untouched.
+   --cat (category color) is set inline per chip/pill/tag.
+   ============================================================ */
+/* month chip: neutral fill + left color bar (color no longer floods the chip) */
+[data-theme="dark"] .chip{
+  background:#1c1c20 !important; color:var(--ink) !important;
+  border-left:3px solid var(--cat,var(--ink-faint));
+}
+[data-theme="dark"] .chip .lk{opacity:.5}
+/* week time block: keep its inline left bar, drop the tint fill */
+[data-theme="dark"] .tg-block{ background:#1c1c20 !important; color:var(--ink) !important; }
+/* all-day pill: neutral fill + left color bar */
+[data-theme="dark"] .tg-chip{
+  background:#1c1c20 !important; color:var(--ink) !important;
+  border-left:3px solid var(--cat,var(--ink-faint)); padding-left:5px;
+}
+/* legend: neutral pill + small color dot (color+이름 both kept) */
+[data-theme="dark"] .tag{ background:var(--line-soft) !important; color:var(--ink-soft) !important; }
+[data-theme="dark"] .tag::before{
+  content:""; width:7px; height:7px; border-radius:50%;
+  background:var(--cat,var(--ink-faint)); flex-shrink:0;
+}
+/* date contrast: ordinary in-month dates go bright white; today(초록 원)·일(빨강)·
+   토(파랑)·공휴일(빨강)·지난달(흐림)은 기존 규칙이 그대로 처리 */
+[data-theme="dark"] .cell:not(.out):not(.today):not(.sun):not(.sat):not(.holiday) .dn{
+  color:var(--ink);
+}

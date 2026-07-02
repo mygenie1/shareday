@@ -83,7 +83,7 @@ function renderMonth(){
     const shown=evs.slice(0,2), extra=evs.length-shown.length;
     const selIso=iso(state.selected);
     const chips=shown.map(e=>{const c=cat(e.catId);
-      return `<div class="chip" data-eid="${e.id}" style="background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">
+      return `<div class="chip" data-eid="${e.id}" style="--cat:${c.color};background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">
         <span style="overflow:hidden;text-overflow:ellipsis">${esc(e.title)}</span>
         ${e.isPrivate?'<svg class="svg lk" viewBox="0 0 24 24" style="width:10px;height:10px;stroke-width:2.4"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}</div>`;
     }).join('');
@@ -158,7 +158,7 @@ function attachMonthDrag(){
 }
 function renderLegend(){
   $('#legend').innerHTML='<span class="lbl">카테고리</span>'+state.categories.map(c=>
-    `<span class="tag" style="background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">
+    `<span class="tag" style="--cat:${c.color};background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">
       ${esc(c.name)}</span>`).join('')
     +`<button class="gear" id="legendGear"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" stroke-linecap="round" stroke-linejoin="round"/></svg>편집</button>`;
   $('#legendGear').onclick=openSettings;
@@ -385,7 +385,7 @@ function renderTimeline(){
       allday=`<div class="tg-adlabel">종일</div>`+days.map((d,i)=>{
         const evs=untimedByDay[i];
         return `<div class="tg-adcell" data-date="${iso(d)}">${evs.map(e=>{const c=cat(e.catId);
-          return `<div class="tg-chip" data-eid="${e.id}" style="background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">${esc(e.title)}</div>`;}).join('')}</div>`;
+          return `<div class="tg-chip" data-eid="${e.id}" style="--cat:${c.color};background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">${esc(e.title)}</div>`;}).join('')}</div>`;
       }).join('');
     }
 
