@@ -4,8 +4,15 @@
    Only events with isPrivate=false are ever uploaded, as a
    "public snapshot", to the server keyed by a share token.
    ============================================================ */
+/* saved theme wins; fall back to the OS setting only when nothing was saved.
+   The <head> inline script (layout.tsx) reads the same key to set data-theme
+   before first paint, so this just keeps in-memory state in sync (no FOUC). */
+function readSavedTheme(){
+  try{ const t=localStorage.getItem('shareday-theme'); if(t==='dark'||t==='light') return t; }catch(e){}
+  return (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark':'light';
+}
 const state = {
-  theme: (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark':'light',
+  theme: readSavedTheme(),
   view: new Date(),
   categories: [
     {id:'c1', name:'업무',   color:'#FF8A5B'},
@@ -48,13 +55,20 @@ function applyTheme(){
     : '<svg class="svg" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
   renderMonth(); renderLegend();
 }
-$('#themeBtn').onclick=()=>{state.theme=isDark()?'light':'dark';applyTheme();};
+$('#themeBtn').onclick=()=>{state.theme=isDark()?'light':'dark';try{localStorage.setItem('shareday-theme',state.theme);}catch(e){}applyTheme();};
 
 /* ---------- calendar ---------- */
 const DOW=['일','월','화','수','목','금','토'];
 function renderDow(){$('#dowRow').innerHTML=DOW.map((d,i)=>`<div class="dow${i===0?' sun':''}${i===6?' sat':''}">${d}</div>`).join('');}
 let monthDragMoved=false, keepScroll=null;
-function reRender(preserve){ if(preserve){const s=document.querySelector('#tlBody .tg-scroll'); keepScroll=s?{left:s.scrollLeft,top:s.scrollTop}:null;} renderMonth(); renderTimeline(); keepScroll=null; afterMutate(); }
+/* Which element actually scrolls the week grid: on mobile the whole .tg scrolls
+   (header + body together); on desktop only the inner .tg-scroll scrolls vertically. */
+function tgScroller(){
+  const tl=$('#tlBody'); if(!tl) return null;
+  const mobile=window.matchMedia && window.matchMedia('(max-width:640px)').matches;
+  return (mobile ? tl.querySelector('.tg') : tl.querySelector('.tg-scroll')) || tl.querySelector('.tg-scroll');
+}
+function reRender(preserve){ if(preserve){const s=tgScroller(); keepScroll=s?{left:s.scrollLeft,top:s.scrollTop}:null;} renderMonth(); renderTimeline(); keepScroll=null; afterMutate(); }
 function renderMonth(){
   const v=state.view, y=v.getFullYear(), m=v.getMonth();
   $('#monthLabel').textContent=`${y}년 ${m+1}월`;
@@ -360,7 +374,7 @@ function renderTimeline(){
       </div>`;
     // scroll so the earliest event of the week is near the top
     const firstMin = timed.length ? Math.min(...timed.map(e=>timeToMin(e.time))) : minH*60;
-    const sc=$('#tlBody').querySelector('.tg-scroll');
+    const sc=tgScroller();
     if(sc){
       if(keepScroll){ sc.scrollLeft=keepScroll.left; sc.scrollTop=keepScroll.top; }
       else {
@@ -397,7 +411,7 @@ function attachBlockInteract(bl,PXH,minH){
     let moved=false, curDate=e.date;
     try{bl.setPointerCapture(ev.pointerId);}catch(_){}
     bl.classList.add('dragging');
-    const sc=document.querySelector('#tlBody .tg-scroll');
+    const sc=tgScroller();
     let edgeDir=0, edgeRAF=0, lastEv=ev;
     function edgeLoop(){ if(!edgeDir||!sc){edgeRAF=0;return;} sc.scrollLeft+=edgeDir*12; applyMove(lastEv); edgeRAF=requestAnimationFrame(edgeLoop); }
 

@@ -43,6 +43,14 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <head>
+        {/* Set the saved theme before first paint so a dark user never sees a
+            light flash on load/refresh. Mirrors the key used in calendar.js. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              "(function(){try{var t=localStorage.getItem('shareday-theme');if(t!=='dark'&&t!=='light'){t=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){}})();",
+          }}
+        />
         <link
           rel="stylesheet"
           href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@latest/dist/web/static/pretendard.css"
