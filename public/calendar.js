@@ -27,7 +27,7 @@ const state = {
   form:{catId:'c1',isPrivate:false},
   newCat:{color:'#10B981'},
   selected:new Date(),        // date focused in the timeline
-  tlMode:'day',               // 'day' | 'week'
+  tlMode:'week',              // 'day' | 'week' — week is the default view on entry
   tlCollapsed:false,
 };
 
@@ -97,7 +97,7 @@ function renderMonth(){
     c.onclick=(ev)=>{
       if(monthDragMoved) return;                          // just finished a drag → ignore the click
       const chip=ev.target.closest('.chip');
-      if(chip){openEvent(chip.dataset.eid);return;}       // tap an event → edit it
+      if(chip){openEventDetail(chip.dataset.eid);return;} // tap an event → detail mini-card (not edit)
       state.selected=new Date(c.dataset.date+'T00:00:00');// tap a day → show that day's list
       state.tlMode='day'; state.tlCollapsed=false;        // reuse the timeline as the "이 날" view
       $$('#daysGrid .cell').forEach(x=>x.classList.remove('sel'));
@@ -109,7 +109,7 @@ function renderMonth(){
     c.ondblclick=(ev)=>{
       if(ev.target.closest('.chip')) return;              // a filled day just keeps the list view
       const di=c.dataset.date;
-      if(!state.events.some(e=>e.date===di)) openEvent(null, di);
+      if(!state.events.some(e=>e.date===di)) openEventEdit(null, di);
     };
   });
   attachMonthDrag();
@@ -169,8 +169,11 @@ $('#prevM').onclick=()=>{state.view.setMonth(state.view.getMonth()-1);renderMont
 $('#nextM').onclick=()=>{state.view.setMonth(state.view.getMonth()+1);renderMonth();};
 $('#todayBtn').onclick=()=>{state.view=new Date();renderMonth();};
 
-/* ---------- event modal ---------- */
-function openEvent(id,presetDate){
+/* ---------- event editor modal ---------- */
+/* Reached ONLY via the detail mini-card's [수정] button, or for brand-new events
+   (FAB / "이 날에 추가" / empty-day double-click). Clicking an existing event
+   anywhere opens the read-only detail card first (openEventDetail), never this. */
+function openEventEdit(id,presetDate){
   state.editingId=id;
   const e=id?state.events.find(x=>x.id===id):null;
   $('#evTitle').textContent=e?'일정 편집':'일정 추가';
@@ -208,6 +211,60 @@ function buildQuickTime(){
     $('#fTime').value=b.dataset.s; $('#fEnd').value=b.dataset.e;
     state.form.endTouched=false;                       // let 종료 follow if 시작 is changed after
   });
+}
+
+/* ---------- detail mini-card (read-only) — the single entry to editing ---------- */
+function fmtDetailWhen(e){
+  const [y,m,d]=e.date.split('-').map(Number);
+  const dt=new Date(y,m-1,d), wd=['일','월','화','수','목','금','토'][dt.getDay()];
+  const when=`${m}월 ${d}일 (${wd})`;
+  return e.time ? `${when} · ${e.time}${e.end?'–'+e.end:''}` : `${when} · 종일`;
+}
+/* built in JS (like the share sheet) so the markup export stays untouched */
+function ensureDetailModal(){
+  if(document.getElementById('dtScrim')) return;
+  const scrim=document.createElement('div');
+  scrim.className='scrim'; scrim.id='dtScrim';
+  scrim.innerHTML=`
+    <div class="sheet" role="dialog" aria-modal="true" style="max-width:420px">
+      <div class="dt-head"><span class="dt-dot" id="dtDot"></span><h2 id="dtTitle"></h2></div>
+      <div class="dt-when" id="dtWhen"></div>
+      <div class="dt-cat" id="dtCat"></div>
+      <p class="dt-memo" id="dtMemo"></p>
+      <div class="dt-vis" id="dtVis"></div>
+      <div class="sheet-actions">
+        <button class="btn ghost" id="dtDelete" style="color:var(--danger)">삭제</button>
+        <button class="btn" id="dtClose">닫기</button>
+        <button class="btn solid" id="dtEdit">수정</button>
+      </div>
+    </div>`;
+  document.body.appendChild(scrim);
+  scrim.onclick=ev=>{ if(ev.target===scrim) closeScrim('#dtScrim'); };  // backdrop closes
+  $('#dtClose').onclick=()=>closeScrim('#dtScrim');
+  $('#dtEdit').onclick=()=>{ const id=state.detailId; closeScrim('#dtScrim'); openEventEdit(id); };
+  $('#dtDelete').onclick=async()=>{
+    const e=state.events.find(x=>x.id===state.detailId); const nm=e?e.title:'이 일정';
+    const ok=await showConfirm({title:'일정 삭제', msg:`'${nm}' 일정을 삭제할까요?`, okLabel:'삭제'});
+    if(!ok) return;
+    state.events=state.events.filter(x=>x.id!==state.detailId);
+    closeScrim('#dtScrim'); reRender(true); toast('삭제했어요');
+  };
+}
+function openEventDetail(id){
+  const e=state.events.find(x=>x.id===id); if(!e) return;
+  ensureDetailModal();
+  state.detailId=id;
+  const c=cat(e.catId);
+  $('#dtDot').style.background=c.color;
+  $('#dtTitle').textContent=e.title||'제목 없음';
+  $('#dtWhen').textContent=fmtDetailWhen(e);
+  $('#dtCat').innerHTML=`<span class="dt-cat-tag" style="background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">${esc(c.name)}</span>`;
+  const memo=$('#dtMemo');
+  if(e.memo){ memo.textContent=e.memo; memo.style.display='block'; } else memo.style.display='none';
+  $('#dtVis').innerHTML = e.isPrivate
+    ? '<svg class="svg" viewBox="0 0 24 24" style="width:14px;height:14px"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg> 프라이빗 · 공유 링크에서 숨겨져요'
+    : '<svg class="svg" viewBox="0 0 24 24" style="width:14px;height:14px"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg> 공개 · 공유 링크에서 보여요';
+  openScrim('#dtScrim');
 }
 function renderCatPick(){
   const sel=state.form.catId;
@@ -253,7 +310,7 @@ $('#evDelete').onclick=async()=>{
   closeScrim('#evScrim');reRender(true);toast('삭제했어요');
 };
 $('#evCancel').onclick=()=>closeScrim('#evScrim');
-$('#fab').onclick=()=>openEvent(null, iso(state.selected));
+$('#fab').onclick=()=>openEventEdit(null, iso(state.selected));
 
 /* ---------- timeline (day / week), collapsible ---------- */
 function timeToMin(t){const[h,m]=t.split(':').map(Number);return h*60+m;}
@@ -297,7 +354,7 @@ function renderTimeline(){
       ? evs.map(rowHtml).join('')
       : `<div class="tl-empty">이 날은 일정이 없어요.</div>`)
       + `<button class="tl-add" id="tlAdd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> 이 날에 추가</button>`;
-    const addBtn=$('#tlAdd'); if(addBtn) addBtn.onclick=()=>openEvent(null, iso(state.selected));
+    const addBtn=$('#tlAdd'); if(addBtn) addBtn.onclick=()=>openEventEdit(null, iso(state.selected));
   }else{
     const [s,e0]=weekRange(state.selected);
     $('#tlTitle').textContent=`${s.getMonth()+1}.${s.getDate()} – ${e0.getMonth()+1}.${e0.getDate()} 주간`;
@@ -387,7 +444,7 @@ function renderTimeline(){
     // wire drag + resize on blocks
     $$('#tlBody .tg-block[data-eid]').forEach(bl=>attachBlockInteract(bl,PXH,minH));
   }
-  $$('#tlBody .tl-row[data-eid], #tlBody .tg-chip[data-eid]').forEach(r=>r.onclick=(ev)=>{ev.stopPropagation();openEvent(r.dataset.eid);});
+  $$('#tlBody .tl-row[data-eid], #tlBody .tg-chip[data-eid]').forEach(r=>r.onclick=(ev)=>{ev.stopPropagation();openEventDetail(r.dataset.eid);});
   $$('#tlBody .tg-dh[data-date]').forEach(col=>col.onclick=()=>{
     state.selected=new Date(col.dataset.date+'T00:00:00');
     renderMonth(); renderTimeline();
@@ -454,7 +511,7 @@ function attachBlockInteract(bl,PXH,minH){
       document.removeEventListener('pointermove',move);
       edgeDir=0; if(edgeRAF) cancelAnimationFrame(edgeRAF);
       bl.classList.remove('dragging');
-      if(!moved){ openEvent(e.id); }        // treat as click → edit
+      if(!moved){ openEventDetail(e.id); }  // treat as click → detail mini-card
       else { reRender(true); toast(mode==='move'?'일정을 옮겼어요':'시간을 바꿨어요'); }
     }
     document.addEventListener('pointermove',move);
@@ -903,6 +960,95 @@ async function fillLinkCard(l,seenAt){
   }catch(e){}
 }
 
+/* ---------- received-links storehouse (links OTHERS shared with me) ---------- */
+/* Kept separate from state.shareLinks (links I created): different purpose —
+   this list is read-only re-access. No accounts, so holding the token = access;
+   we store the token only and re-fetch GET /api/share/[token] each open so
+   expiry/revocation is always reflected (never cache the snapshot locally). */
+state.savedLinks=[];   // [{token, ownerName, savedAt, lastOpenedAt}], newest last
+function saveSavedLinks(){ idbSet('savedLinks', state.savedLinks); }
+function fmtSavedDate(ms){
+  const d=new Date(ms); if(isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}.${d.getMonth()+1}.${d.getDate()}`;
+}
+/* inject a "받은 캘린더" button into the header, left of 공유 (keeps markup export clean) */
+function ensureInboxBtn(){
+  if(document.getElementById('recvBtn')) return;
+  const actions=document.querySelector('.top-actions'); const shareBtn=$('#shareBtn');
+  if(!actions||!shareBtn) return;
+  const b=document.createElement('button');
+  b.className='btn icn'; b.id='recvBtn'; b.setAttribute('aria-label','받은 캘린더');
+  b.innerHTML='<svg class="svg" viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
+  actions.insertBefore(b, shareBtn);
+  b.onclick=openRecv;
+}
+function buildRecvSheet(){
+  if(document.getElementById('recvScrim')) return;
+  const scrim=document.createElement('div');
+  scrim.className='scrim'; scrim.id='recvScrim';
+  scrim.innerHTML=`
+    <div class="sheet" role="dialog" aria-modal="true" style="max-width:460px">
+      <h2>받은 캘린더</h2>
+      <p class="sub">남이 준 공유 링크를 저장해 두고 여기서 바로 열어요. 링크를 가진 사람은 누구나 열 수 있어요.</p>
+      <div id="recvList"></div>
+      <div class="sheet-actions"><button class="btn solid" id="recvDone" style="flex:1">완료</button></div>
+    </div>`;
+  document.body.appendChild(scrim);
+  scrim.onclick=ev=>{ if(ev.target===scrim) closeScrim('#recvScrim'); };
+  $('#recvDone').onclick=()=>closeScrim('#recvScrim');
+}
+function openRecv(){ buildRecvSheet(); openScrim('#recvScrim'); renderRecv(); }
+function recvOwnerName(l){ return l.ownerName || '공유 캘린더'; }
+function recvCardShell(l){
+  return `<div class="rcard" data-token="${l.token}">
+    <div class="rcard-main" data-open>
+      <div class="rcard-name">${esc(recvOwnerName(l))}</div>
+      <div class="rcard-meta"><span class="rcard-badge" data-status>확인 중…</span>
+        <span class="lmeta-sep">·</span>저장 ${fmtSavedDate(l.savedAt)}</div>
+    </div>
+    <button class="rcard-del" data-del aria-label="목록에서 지우기"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg></button>
+  </div>`;
+}
+async function renderRecv(){
+  const list=$('#recvList'); if(!list) return;
+  const links=[...state.savedLinks].reverse();   // newest first
+  if(!links.length){
+    list.innerHTML='<p class="links-empty">아직 저장한 캘린더가 없어요. 받은 링크를 열고 “이 캘린더 저장”을 눌러보세요.</p>';
+    return;
+  }
+  list.innerHTML=links.map(recvCardShell).join('');
+  list.querySelectorAll('.rcard').forEach(card=>{
+    const token=card.dataset.token;
+    const l=state.savedLinks.find(x=>x.token===token);
+    card.querySelector('[data-del]').onclick=async(ev)=>{
+      ev.stopPropagation();
+      const ok=await showConfirm({title:'목록에서 지우기', msg:`'${recvOwnerName(l)}'을(를) 받은 캘린더에서 지울까요?`, okLabel:'지우기'});
+      if(!ok) return;
+      state.savedLinks=state.savedLinks.filter(x=>x.token!==token); saveSavedLinks(); renderRecv();
+      toast('목록에서 지웠어요');
+    };
+    card.querySelector('[data-open]').onclick=()=>{
+      if(card.classList.contains('dead')) return;                 // gone → not openable
+      l.lastOpenedAt=Date.now(); saveSavedLinks();
+      window.open('/s/'+encodeURIComponent(token),'_blank','noopener');
+    };
+  });
+  // fetch live status per link (expiry/revocation reflected each open)
+  await Promise.all(links.map(async l=>{
+    const card=list.querySelector('.rcard[data-token="'+l.token+'"]'); if(!card) return;
+    const badge=card.querySelector('[data-status]');
+    try{
+      const res=await fetch('/api/share/'+encodeURIComponent(l.token));
+      if(res.ok){
+        const d=await res.json();
+        if(!d.expiresAt){ badge.textContent='무기한'; }
+        else{ const days=Math.ceil((new Date(d.expiresAt).getTime()-Date.now())/86400000);
+          badge.textContent = days>0 ? 'D-'+days : '만료됨'; if(days<=0){ card.classList.add('dead'); badge.classList.add('gone'); } }
+      }else{ card.classList.add('dead'); badge.textContent='만료됨'; badge.classList.add('gone'); }  // 410/404 → 만료·폐기
+    }catch(e){ badge.textContent='확인 실패'; }
+  }));
+}
+
 /* ---------- holidays (server-cached) ---------- */
 const HOLIDAYS={};
 const holidayYears=new Set();
@@ -919,17 +1065,19 @@ function ensureHolidays(year){
 
 /* ---------- boot ---------- */
 async function loadState(){
-  const [ev,cats,links,seen]=await Promise.all([
-    idbGet('events'),idbGet('categories'),idbGet('shareLinks'),idbGet('cmtSeenAt')
+  const [ev,cats,links,seen,saved]=await Promise.all([
+    idbGet('events'),idbGet('categories'),idbGet('shareLinks'),idbGet('cmtSeenAt'),idbGet('savedLinks')
   ]);
   if(Array.isArray(cats)&&cats.length) state.categories=cats;
   if(Array.isArray(ev)) state.events=ev;          // stored (even empty) → respect it
                                                   // first run → start with an empty calendar
   if(Array.isArray(links)) state.shareLinks=links;
   if(typeof seen==='number') state.cmtSeenAt=seen;
+  if(Array.isArray(saved)) state.savedLinks=saved;
 }
 async function initApp(){
   try{ await loadState(); }catch(e){ console.warn('[shareday] load failed',e); }
+  ensureInboxBtn();                               // "받은 캘린더" entry in the header
   renderDow(); applyTheme(); renderTimeline();
 }
 initApp();

@@ -10,6 +10,14 @@
 .rc-word{font-size:16px;font-weight:800;letter-spacing:-.035em;color:var(--ink-soft)}
 .rc-title{font-size:21px;font-weight:800;letter-spacing:-.03em;color:var(--ink);margin-top:6px}
 .rc-sub{font-size:12.5px;color:var(--ink-faint)}
+.rc-save{align-self:flex-start;margin-top:10px;height:38px;padding:0 16px;border-radius:11px;cursor:pointer;
+  font-family:inherit;font-size:13px;font-weight:700;border:1px solid var(--accent);
+  background:var(--accent);color:#fff;transition:filter .15s,background .15s,color .15s}
+.rc-save:hover:not(:disabled){filter:brightness(1.06)}
+.rc-save:active:not(:disabled){transform:scale(.97)}
+.rc-save.on{background:var(--accent-soft);color:var(--accent);cursor:default}
+[data-theme="dark"] .rc-save{color:#12211A}
+[data-theme="dark"] .rc-save.on{color:var(--accent)}
 
 /* ── month calendar ── */
 .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow-soft)}

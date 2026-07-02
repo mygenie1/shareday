@@ -26,6 +26,98 @@ export type RecipientComment = {
 
 const DOW = ["일", "월", "화", "수", "목", "금", "토"];
 
+/* ── received-link store: the SAME device-only IndexedDB the main app uses.
+   No accounts, so holding the token is the access grant; we save only the token
+   (+ owner name / timestamps) and the storehouse re-fetches the snapshot each
+   time, so expiry/revocation is always reflected. ── */
+const IDB_NAME = "shareday";
+const IDB_STORE = "kv";
+type SavedLink = {
+  token: string;
+  ownerName: string | null;
+  savedAt: number;
+  lastOpenedAt: number;
+};
+function idbOpen(): Promise<IDBDatabase> {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(IDB_NAME, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore(IDB_STORE);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+function idbGet<T>(key: string): Promise<T | undefined> {
+  return idbOpen()
+    .then(
+      (db) =>
+        new Promise<T | undefined>((res, rej) => {
+          const rq = db
+            .transaction(IDB_STORE, "readonly")
+            .objectStore(IDB_STORE)
+            .get(key);
+          rq.onsuccess = () => res(rq.result as T | undefined);
+          rq.onerror = () => rej(rq.error);
+        })
+    )
+    .catch(() => undefined);
+}
+function idbSet(key: string, val: unknown): Promise<void> {
+  return idbOpen()
+    .then(
+      (db) =>
+        new Promise<void>((res, rej) => {
+          const tx = db.transaction(IDB_STORE, "readwrite");
+          tx.objectStore(IDB_STORE).put(val, key);
+          tx.oncomplete = () => res();
+          tx.onerror = () => rej(tx.error);
+        })
+    )
+    .catch(() => {});
+}
+
+function SaveButton({
+  token,
+  ownerName,
+}: {
+  token: string;
+  ownerName?: string | null;
+}) {
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    let live = true;
+    idbGet<SavedLink[]>("savedLinks").then((list) => {
+      if (live && Array.isArray(list) && list.some((l) => l.token === token))
+        setSaved(true);
+    });
+    return () => {
+      live = false;
+    };
+  }, [token]);
+  async function save() {
+    if (saved) return;
+    const list = (await idbGet<SavedLink[]>("savedLinks")) || [];
+    if (!list.some((l) => l.token === token)) {
+      list.push({
+        token,
+        ownerName: ownerName ?? null,
+        savedAt: Date.now(),
+        lastOpenedAt: Date.now(),
+      });
+      await idbSet("savedLinks", list);
+    }
+    setSaved(true);
+  }
+  return (
+    <button
+      className={`rc-save ${saved ? "on" : ""}`}
+      onClick={save}
+      disabled={saved}
+    >
+      {saved ? "저장됨 ✓" : "＋ 이 캘린더 저장"}
+    </button>
+  );
+}
+
 /* ── date helpers (all local-time; snapshot dates are YYYY-MM-DD) ── */
 function parseYmd(s: string): Date {
   const [y, m, d] = s.split("-").map(Number);
@@ -204,6 +296,7 @@ export default function Recipient({
             ? `${fmtExpiry(expiresAt)}까지 볼 수 있어요 · 공개된 일정만 보여요`
             : "공개된 일정만 보여요"}
         </span>
+        <SaveButton token={token} ownerName={ownerName} />
       </div>
 
       {/* ── 2. month calendar ── */}
