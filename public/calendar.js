@@ -27,6 +27,7 @@ const state = {
   form:{catId:'c1',isPrivate:false},
   newCat:{color:'#10B981'},
   selected:new Date(),        // date focused in the timeline
+  armedDate:null,             // month: a day is selected on the 1st tap; a 2nd tap opens its sheet
   tlMode:'week',              // 'day' | 'week' — week is the default view on entry
   tlCollapsed:false,
 };
@@ -166,12 +167,13 @@ function renderMonth(){
       if(monthDragMoved) return;                          // just finished a drag → ignore the click
       const chip=ev.target.closest('.chip');
       if(chip){openEventDetail(chip.dataset.eid);return;} // tap an event → detail mini-card (not edit)
-      const d=new Date(c.dataset.date+'T00:00:00');       // tap a day → that day's full list as a sheet
-      state.selected=d;                                    // focus this day (FAB/추가 default to it)
+      const di=c.dataset.date, d=new Date(di+'T00:00:00');
+      const armed=state.armedDate===di;                    // 2nd tap on the same day → open its list
+      state.selected=d; state.armedDate=di;                // 1st tap: just select + focus this day
       $$('#daysGrid .cell').forEach(x=>x.classList.remove('sel'));
       c.classList.add('sel');
-      renderTimeline();                                    // keep the week view; sync its selected column
-      openDaySheet(d);                                     // the day's events rise in a bottom sheet
+      renderTimeline();                                    // week view below reflects the picked day
+      if(armed) openDaySheet(d);                            // only the 2nd tap raises the bottom sheet
     };
   });
   attachMonthDrag();
@@ -183,19 +185,23 @@ function attachMonthDrag(){
       if(ev.button!==undefined && ev.button!==0) return;
       const e=state.events.find(x=>x.id===chip.dataset.eid); if(!e) return;
       const startX=ev.clientX, startY=ev.clientY;
+      const gr=chip.getBoundingClientRect();
+      const offX=ev.clientX-gr.left, offY=ev.clientY-gr.top;   // grab point → clone stays under the finger
       let dragging=false, clone=null, lastCell=null;
       try{chip.setPointerCapture(ev.pointerId);}catch(_){}
       function mv2(mv){
         const dx=mv.clientX-startX, dy=mv.clientY-startY;
-        if(!dragging && (Math.abs(dx)>5||Math.abs(dy)>5)){
+        if(!dragging && (Math.abs(dx)>4||Math.abs(dy)>4)){
           dragging=true; monthDragMoved=true;
-          const r=chip.getBoundingClientRect();
           clone=chip.cloneNode(true);
-          Object.assign(clone.style,{position:'fixed',left:r.left+'px',top:r.top+'px',width:Math.max(r.width,72)+'px',margin:'0',zIndex:'999',pointerEvents:'none',opacity:'.95',boxShadow:'0 10px 22px rgba(0,0,0,.28)',transform:'scale(1.06)'});
-          document.body.appendChild(clone); chip.style.opacity='.3';
+          // match the week block's lift: same width, no scale jump, sits where grabbed
+          Object.assign(clone.style,{position:'fixed',left:gr.left+'px',top:gr.top+'px',width:gr.width+'px',
+            margin:'0',zIndex:'999',pointerEvents:'none',opacity:'.95',
+            boxShadow:'0 8px 20px -4px rgba(35,34,29,.32)',transform:'none'});
+          document.body.appendChild(clone); chip.style.opacity='.28';
         }
         if(dragging){
-          clone.style.left=(mv.clientX-22)+'px'; clone.style.top=(mv.clientY-12)+'px';
+          clone.style.left=(mv.clientX-offX)+'px'; clone.style.top=(mv.clientY-offY)+'px';
           const el=document.elementFromPoint(mv.clientX,mv.clientY);
           const cell=el&&el.closest?el.closest('#daysGrid .cell'):null;
           if(cell!==lastCell){ if(lastCell) lastCell.style.boxShadow=''; lastCell=cell;
@@ -461,9 +467,9 @@ function renderTimeline(){
     const WD=['일','월','화','수','목','금','토'];
     const days=[]; for(let i=0;i<7;i++){const d=new Date(s);d.setDate(s.getDate()+i);days.push(d);}
 
-    // Visible hour window hugs the week's actual events: earliest start −1h to
-    // latest end +2h (room to drag). No events → a compact 09–18 default. Hours
-    // outside the window are still reachable by scrolling.
+    // Visible window centers on the week's actual events but keeps ~3h of slack
+    // above and below — enough empty grid to scroll into and to drag events onto
+    // nearby hours, without unrolling the whole 24h. No events → a calm 08–19.
     const timed=state.events.filter(e=>{const di=e.date;return e.time && days.some(d=>iso(d)===di);});
     let minH,maxH;
     if(timed.length){
@@ -471,9 +477,11 @@ function renderTimeline(){
       timed.forEach(e=>{const sh=+e.time.split(':')[0];
         const eh=e.end?Math.ceil(timeToMin(e.end)/60):sh+1;
         if(sh<lo)lo=sh; if(eh>hi)hi=eh;});
-      minH=Math.max(0,lo-1); maxH=Math.min(24,hi+2);
-    }else{ minH=9; maxH=18; }
-    if(maxH-minH<4){ maxH=Math.min(24,minH+4); minH=Math.max(0,maxH-4); }  // keep a sane minimum height
+      minH=Math.max(0,lo-2); maxH=Math.min(24,hi+3);
+    }else{ minH=8; maxH=19; }
+    // keep a comfortable minimum height: empty rows above/below give scroll slack
+    // and drop targets, so the grid never feels like a locked, too-short box.
+    while(maxH-minH<9){ if(minH>0)minH--; if(maxH-minH<9 && maxH<24)maxH++; if(minH===0&&maxH===24)break; }
     const HOURS=maxH-minH, PXH=40;                 // px per hour
 
     // header row: weekday + date
@@ -566,6 +574,22 @@ function attachBlockInteract(bl,PXH,minH){
     const grip=ev.target.getAttribute && ev.target.getAttribute('data-grip');
     const mode=grip?('resize-'+grip):'move';
     const e=state.events.find(x=>x.id===bl.dataset.eid); if(!e) return;
+    // 2-step edit: the FIRST press only "arms" the block (no time change) so a
+    // stray touch can't nudge it. A tap still opens the detail card. Once armed,
+    // the NEXT drag actually moves/resizes. reRender rebuilds blocks un-armed,
+    // so every edit is a deliberate press-then-drag.
+    if(!bl.classList.contains('armed')){
+      const sx=ev.clientX, sy=ev.clientY; let mv=false;
+      bl.classList.add('pressing');
+      try{bl.setPointerCapture(ev.pointerId);}catch(_){}
+      const m1=q=>{ if(Math.abs(q.clientX-sx)>4||Math.abs(q.clientY-sy)>4) mv=true; };
+      const u1=()=>{ document.removeEventListener('pointermove',m1); bl.classList.remove('pressing');
+        if(mv){ $$('#tlBody .tg-block.armed').forEach(x=>x.classList.remove('armed')); bl.classList.add('armed'); toast('한 번 더 끌어서 옮겨요'); }
+        else openEventDetail(e.id); };                 // no drag → treat as a tap → detail card
+      document.addEventListener('pointermove',m1);
+      document.addEventListener('pointerup',u1,{once:true});
+      ev.preventDefault(); ev.stopPropagation(); return;
+    }
     const cols=[...$$('#tlBody .tg-col')];
     const colW=cols[0].getBoundingClientRect().width;
     const startX=ev.clientX, startY=ev.clientY;

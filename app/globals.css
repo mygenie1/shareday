@@ -507,3 +507,11 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 [data-theme="dark"] .cell:not(.out):not(.today):not(.sun):not(.sat):not(.holiday) .dn{
   color:var(--ink);
 }
+
+/* week block 2-step edit: brief press feedback, then an "armed" ring that shows
+   the block is ready to move/resize. Placed last so it wins over the dark fill. */
+.tg-block.pressing{transform:scale(.97);transition:transform .08s}
+.tg-block.armed,[data-theme="dark"] .tg-block.armed{
+  box-shadow:0 0 0 2px var(--accent),0 6px 18px -4px rgba(0,0,0,.28) !important;z-index:4}
+.tg-block.armed .tg-grip::after{content:"";position:absolute;left:50%;transform:translateX(-50%);
+  width:22px;height:3px;border-radius:3px;background:var(--accent);opacity:.7}
