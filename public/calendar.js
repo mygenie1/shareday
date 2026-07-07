@@ -111,6 +111,7 @@ function openMenu(){
   menu.style.right=Math.max(8,window.innerWidth-r.right)+'px';
   menu.classList.add('on'); btn.setAttribute('aria-expanded','true');
   syncMenuTheme();
+  syncBackOpen();                      // back button closes the menu before leaving
 }
 function closeMenu(){
   const m=document.getElementById('appMenu'); if(m) m.classList.remove('on');
@@ -285,32 +286,85 @@ function renderFriendLegend(){
 function esc(s){return (s||'').replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));}
 function fmtDateK(isoStr){const[y,m,d]=isoStr.split('-').map(Number);const wd=['일','월','화','수','목','금','토'][new Date(y,m-1,d).getDay()];return `${m}월 ${d}일 (${wd})`;}
 
-/* month: swipe left/right to change month (touch only; arrows still work). Bound
-   once to the calendar card; chips own their own gesture so a chip-drag isn't a swipe. */
+/* month: swipe left/right to change month. Uses TOUCH events (pointer events get
+   cancelled the moment the browser claims a scroll gesture, which is why the old
+   pointer version never fired). Once we detect a horizontal drag we preventDefault
+   so the browser doesn't scroll/nav-gesture instead. Chips own their own gesture;
+   vertical drags fall through to normal page scroll. */
 function attachMonthSwipe(){
   const card=$('#daysGrid') && $('#daysGrid').closest('.card');
   if(!card || card.dataset.swipe) return;
   card.dataset.swipe='1';
-  let sx=0,sy=0,st=0,tracking=false;
-  card.addEventListener('pointerdown',e=>{
-    if(e.pointerType==='mouse') return;              // mouse uses the ‹ › buttons
-    if(e.target.closest('.chip')) return;            // chip-drag owns that gesture
-    sx=e.clientX; sy=e.clientY; st=Date.now(); tracking=true;
-  });
-  card.addEventListener('pointerup',e=>{
-    if(!tracking) return; tracking=false;
-    const dx=e.clientX-sx, dy=e.clientY-sy;
-    if(Date.now()-st>600) return;                    // too slow to be a flick
-    if(Math.abs(dx)<60 || Math.abs(dx)<Math.abs(dy)*1.6) return;   // must be clearly horizontal
+  card.style.touchAction='pan-y';                    // let the browser own only vertical; horizontal is ours
+  let sx=0,sy=0,st=0,active=false,horiz=false;
+  card.addEventListener('touchstart',e=>{
+    if(e.touches.length!==1 || e.target.closest('.chip')){ active=false; return; }
+    const t=e.touches[0]; sx=t.clientX; sy=t.clientY; st=Date.now(); active=true; horiz=false;
+  },{passive:true});
+  card.addEventListener('touchmove',e=>{
+    if(!active) return;
+    const t=e.touches[0], dx=t.clientX-sx, dy=t.clientY-sy;
+    if(!horiz && Math.abs(dx)>12 && Math.abs(dx)>Math.abs(dy)*1.3) horiz=true;  // commit to horizontal
+    if(horiz && e.cancelable) e.preventDefault();     // take over → block scroll / back-gesture
+  },{passive:false});
+  card.addEventListener('touchend',e=>{
+    if(!active) return; active=false;
+    if(monthDragMoved) return;                        // a chip long-press drag ran → not a swipe
+    const t=e.changedTouches[0], dx=t.clientX-sx, dy=t.clientY-sy;
+    if(Date.now()-st>700) return;                     // too slow to be a flick
+    if(Math.abs(dx)<45 || Math.abs(dx)<Math.abs(dy)*1.3) return;   // must be clearly horizontal
     state.view.setMonth(state.view.getMonth()+(dx<0?1:-1));
     renderMonth();
-    monthDragMoved=true; setTimeout(()=>{monthDragMoved=false;},0);  // swallow the trailing click
-  });
+  },{passive:false});
 }
 
 $('#prevM').onclick=()=>{state.view.setMonth(state.view.getMonth()-1);renderMonth();};
 $('#nextM').onclick=()=>{state.view.setMonth(state.view.getMonth()+1);renderMonth();};
 $('#todayBtn').onclick=()=>{state.view=new Date();renderMonth();};
+
+/* ---------- year/month quick picker (tap the month title) — jump far in one step ---------- */
+$('#monthLabel').style.cursor='pointer';
+$('#monthLabel').setAttribute('role','button');
+$('#monthLabel').onclick=openMonthPicker;
+let pickerYear=null;
+function ensureMonthPicker(){
+  if(document.getElementById('monthPickerScrim')) return;
+  const scrim=document.createElement('div');
+  scrim.className='scrim'; scrim.id='monthPickerScrim';
+  scrim.innerHTML=`
+    <div class="sheet" role="dialog" aria-modal="true" style="max-width:360px">
+      <div class="mp-head">
+        <button class="btn icn ghost" id="mpPrevY" aria-label="이전 해"><svg class="svg" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+        <div class="mp-year" id="mpYear">—</div>
+        <button class="btn icn ghost" id="mpNextY" aria-label="다음 해"><svg class="svg" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg></button>
+      </div>
+      <div class="mp-grid" id="mpGrid"></div>
+      <div class="sheet-actions">
+        <button class="btn ghost" id="mpToday" style="flex:1">오늘로</button>
+        <button class="btn" id="mpClose" style="flex:1">닫기</button>
+      </div>
+    </div>`;
+  document.body.appendChild(scrim);
+  scrim.onclick=ev=>{ if(ev.target===scrim) closeScrim('#monthPickerScrim'); };
+  $('#mpPrevY').onclick=()=>{ pickerYear--; renderMonthPicker(); };
+  $('#mpNextY').onclick=()=>{ pickerYear++; renderMonthPicker(); };
+  $('#mpToday').onclick=()=>{ state.view=new Date(); closeScrim('#monthPickerScrim'); renderMonth(); };
+  $('#mpClose').onclick=()=>closeScrim('#monthPickerScrim');
+}
+function openMonthPicker(){ ensureMonthPicker(); pickerYear=state.view.getFullYear(); renderMonthPicker(); openScrim('#monthPickerScrim'); }
+function renderMonthPicker(){
+  $('#mpYear').textContent=pickerYear+'년';
+  const curY=state.view.getFullYear(), curM=state.view.getMonth();
+  const today=new Date(), tY=today.getFullYear(), tM=today.getMonth();
+  $('#mpGrid').innerHTML=Array.from({length:12},(_,m)=>{
+    const sel=(pickerYear===curY&&m===curM), isToday=(pickerYear===tY&&m===tM);
+    return `<button class="mp-m${sel?' sel':''}${isToday&&!sel?' today':''}" data-m="${m}">${m+1}월</button>`;
+  }).join('');
+  $$('#mpGrid .mp-m').forEach(b=>b.onclick=()=>{
+    state.view=new Date(pickerYear, +b.dataset.m, 1);
+    closeScrim('#monthPickerScrim'); renderMonth();
+  });
+}
 
 /* ---------- event editor modal ---------- */
 /* Reached ONLY via the detail mini-card's [수정] button, or for brand-new events
@@ -685,7 +739,8 @@ function attachBlockInteract(bl,PXH,minH){
     function edgeLoop(){ if(!edgeDir||!sc){edgeRAF=0;return;} sc.scrollLeft+=edgeDir*12; applyMove(lastEv); edgeRAF=requestAnimationFrame(edgeLoop); }
     function move(mv){ lastEv=mv;
       if(!armed){ const dx=mv.clientX-startX, dy=mv.clientY-startY;
-        if(Math.abs(dx)>8||Math.abs(dy)>8){ cancelled=true; clearTimeout(lpTimer); bl.classList.remove('pressing'); }
+        // a clear early swipe = scroll/flick intent → cancel the long-press (no drag, no detail)
+        if(Math.abs(dx)>12||Math.abs(dy)>12){ cancelled=true; clearTimeout(lpTimer); bl.classList.remove('pressing'); }
         return; }
       applyMove(mv);
     }
@@ -729,7 +784,7 @@ function attachBlockInteract(bl,PXH,minH){
       edgeDir=0; if(edgeRAF) cancelAnimationFrame(edgeRAF);
       bl.classList.remove('pressing','dragging','armed');
       if(!armed){ if(!cancelled) openEventDetail(e.id); return; }   // quick tap → detail card
-      if(!moved){ openEventDetail(e.id); return; }                  // held but never dragged → detail
+      if(!moved){ return; }                                         // long-pressed but not dragged → just drop, NO detail
       // e currently holds the dropped values. Show them (no save), then confirm.
       const proposed={time:e.time,end:e.end,date:e.date};
       paint(true);
@@ -920,8 +975,45 @@ function toggleVis(row){
 $('#shareBtn').onclick=openShare;   // the sheet body + its controls are wired in buildShareSheet()
 
 /* ---------- scrim util ---------- */
-function openScrim(s){$(s).classList.add('on');}
+function openScrim(s){$(s).classList.add('on'); syncBackOpen();}
 function closeScrim(s){$(s).classList.remove('on');}
+
+/* ---------- Android/browser back: close the top open layer first; exit only at home ----------
+   While any overlay (sheet/modal/detail/picker/menu) is open we keep ONE history
+   sentinel. A back press pops it → popstate closes the topmost layer (re-arming a
+   sentinel if more remain). With nothing open, back does its normal thing (leave). */
+let sdSentinel=false;
+function overlayCount(){
+  let n=document.querySelectorAll('.scrim.on').length;
+  const menu=document.getElementById('appMenu');
+  if(menu && menu.classList.contains('on')) n++;
+  return n;
+}
+function closeTopOverlay(){
+  const menu=document.getElementById('appMenu');
+  const scrims=[...document.querySelectorAll('.scrim.on')];
+  const menuOpen=menu && menu.classList.contains('on');
+  // pick the visually topmost: compare menu(z=60) against the highest-z open scrim
+  scrims.sort((a,b)=>(parseInt(getComputedStyle(b).zIndex)||0)-(parseInt(getComputedStyle(a).zIndex)||0));
+  const topScrim=scrims[0];
+  const topScrimZ=topScrim?(parseInt(getComputedStyle(topScrim).zIndex)||0):-1;
+  if(menuOpen && topScrimZ<60){ closeMenu(); return; }
+  if(!topScrim) { if(menuOpen) closeMenu(); return; }
+  if(topScrim.id==='confirmScrim'){ resolveConfirm(false); return; }   // also settles the pending promise
+  topScrim.classList.remove('on');
+}
+function syncBackOpen(){   // called right after any overlay is shown
+  if(!sdSentinel && overlayCount()>0){ sdSentinel=true; try{ history.pushState({sd:1},''); }catch(e){} }
+}
+window.addEventListener('popstate',()=>{
+  if(overlayCount()>0){
+    closeTopOverlay();
+    sdSentinel=false;
+    if(overlayCount()>0){ sdSentinel=true; try{ history.pushState({sd:1},''); }catch(e){} }  // re-arm for the next layer
+  }else{
+    sdSentinel=false;   // stale sentinel consumed → next back leaves the app
+  }
+});
 $$('.scrim').forEach(sc=>sc.onclick=e=>{if(e.target===sc)sc.classList.remove('on');});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){
   const cs=$('#confirmScrim'); if(cs&&cs.classList.contains('on')) resolveConfirm(false);  // don't leave a pending confirm hanging
@@ -1024,11 +1116,19 @@ function syncAllLive(){
 }
 async function revokeLink(token){
   const l=state.shareLinks.find(x=>x.token===token); if(!l) return;
-  const ok=await showConfirm({title:'링크 폐기', msg:`'${l.name||autoLinkName()}' 링크를 폐기하면 받은 사람이 더 이상 열 수 없어요. 폐기할까요?`, okLabel:'폐기'});
+  const ok=await showConfirm({title:'링크 폐기', msg:'이 링크를 폐기하면 받은 사람이 더는 못 봐요. 폐기할까요?', okLabel:'폐기'});
   if(!ok) return;
-  l.revoked=true; saveShareLinks(); renderLinks(); renderWarn();
-  try{ await fetch('/api/share/'+encodeURIComponent(token),{method:'DELETE'}); }catch(e){}
-  toast('링크를 폐기했어요');
+  let done=false;
+  try{ const res=await fetch('/api/share/'+encodeURIComponent(token),{method:'DELETE'}); done=res.ok; }
+  catch(e){ done=false; }
+  if(done){
+    // server marked it revoked (recipient now gets 410) → also drop it from my list
+    state.shareLinks=state.shareLinks.filter(x=>x.token!==token);
+    saveShareLinks(); renderLinks(); renderWarn();
+    toast('링크를 폐기했어요');
+  }else{
+    toast('폐기하지 못했어요. 잠시 후 다시 시도해 주세요');   // keep it (no ghost state)
+  }
 }
 
 /* ---------- share sheet body (built in JS so we never touch the markup export) ---------- */
@@ -1299,9 +1399,32 @@ function buildRecvSheet(){
   $('#recvDone').onclick=()=>closeScrim('#recvScrim');
 }
 function openRecv(){ buildRecvSheet(); openScrim('#recvScrim'); renderRecv(); }
-function recvOwnerName(l){ return l.ownerName || '공유 캘린더'; }
+/* rename a friend calendar in place — my private alias (no accounts). Keeps the
+   overlay legend/detail in sync by updating the fetched snapshot's name too. */
+function startRecvRename(token,card){
+  const l=state.savedLinks.find(x=>x.token===token); if(!l) return;
+  const nameEl=card.querySelector('.rcard-name'); if(!nameEl) return;
+  const input=document.createElement('input');
+  input.className='inp lcard-name-input'; input.value=recvOwnerName(l);
+  nameEl.replaceWith(input); input.focus(); input.select();
+  let done=false;
+  const commit=()=>{ if(done) return; done=true;
+    const v=input.value.trim();
+    if(v){ l.ownerName=v; if(state.overlayCache[token]) state.overlayCache[token].name=v; }
+    saveSavedLinks(); renderRecv(); if(overlayOn()) renderLegend();
+  };
+  input.addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();commit();} else if(e.key==='Escape'){done=true;renderRecv();} });
+  input.addEventListener('blur',commit);
+}
+/* my own alias for this friend (editable); falls back to the sharer's name, then a number */
+function recvOwnerName(l){
+  if(l.ownerName) return l.ownerName;
+  const i=state.savedLinks.findIndex(x=>x.token===l.token);
+  return '친구 캘린더 '+(i>=0?i+1:1);
+}
 function recvCardShell(l){
   const on=!!l.overlay, col=friendColorFor(l.token);
+  const pencil='<svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
   return `<div class="rcard" data-token="${l.token}">
     <div class="rcard-top">
       <div class="rcard-main" data-open>
@@ -1309,6 +1432,7 @@ function recvCardShell(l){
         <div class="rcard-meta"><span class="rcard-badge" data-status>확인 중…</span>
           <span class="lmeta-sep">·</span>저장 ${fmtSavedDate(l.savedAt)}</div>
       </div>
+      <button class="rcard-rename" data-rename aria-label="이름 수정">${pencil}</button>
       <button class="rcard-del" data-del aria-label="목록에서 지우기"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg></button>
     </div>
     <div class="rcard-overlay">
@@ -1340,6 +1464,8 @@ async function renderRecv(){
       l.lastOpenedAt=Date.now(); saveSavedLinks();
       window.open('/s/'+encodeURIComponent(token),'_blank','noopener');
     };
+    const rn=card.querySelector('[data-rename]');
+    if(rn) rn.onclick=(ev)=>{ ev.stopPropagation(); startRecvRename(token,card); };
     const sw=card.querySelector('[data-overlay]');
     if(sw) sw.onclick=()=>{
       l.overlay=!l.overlay;
