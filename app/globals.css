@@ -29,6 +29,12 @@ body{background-color:var(--bg);color:var(--ink);
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
   line-height:1.5;letter-spacing:-.006em}
 .wrap{max-width:960px;margin:0 auto;padding:34px 22px 96px}
+/* long-press UX: the interactive chrome (calendar, chips, blocks, buttons, menus)
+   never selects text or raises the iOS copy/search callout; real, copyable text
+   content (detail-card title/when/memo, inputs) opts back in below. */
+.wrap,.menu,.scrim .sheet,button{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+input,textarea,.inp,#dtTitle,.dt-when,.dt-memo,.dt-cat-tag{
+  -webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 
 /* header */

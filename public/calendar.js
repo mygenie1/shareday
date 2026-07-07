@@ -210,6 +210,7 @@ function attachMonthDrag(){
       lpTimer=setTimeout(()=>{
         if(cancelled) return;
         armed=true; monthDragMoved=true;                       // suppress the trailing click
+        clearSel();
         if(navigator.vibrate) try{navigator.vibrate(15);}catch(_){}
         clone=chip.cloneNode(true);                             // floating "lifted" copy
         Object.assign(clone.style,{position:'fixed',left:gr.left+'px',top:gr.top+'px',width:gr.width+'px',
@@ -285,6 +286,9 @@ function renderFriendLegend(){
 }
 function esc(s){return (s||'').replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));}
 function fmtDateK(isoStr){const[y,m,d]=isoStr.split('-').map(Number);const wd=['일','월','화','수','목','금','토'][new Date(y,m-1,d).getDay()];return `${m}월 ${d}일 (${wd})`;}
+/* belt-and-braces: drop any stray text selection when a long-press begins (CSS
+   user-select:none already prevents it starting on interactive chrome) */
+function clearSel(){ try{const s=window.getSelection&&window.getSelection(); if(s&&s.removeAllRanges) s.removeAllRanges();}catch(_){} }
 
 /* month: swipe left/right to change month. Uses TOUCH events (pointer events get
    cancelled the moment the browser claims a scroll gesture, which is why the old
@@ -733,6 +737,7 @@ function attachBlockInteract(bl,PXH,minH){
     lpTimer=setTimeout(()=>{
       if(cancelled) return;
       armed=true; bl.classList.remove('pressing'); bl.classList.add('dragging','armed');
+      clearSel();
       if(navigator.vibrate) try{navigator.vibrate(15);}catch(_){}
       toast(mode==='move'?'끌어서 옮겨요':'끌어서 시간을 바꿔요');
     },450);
@@ -1114,21 +1119,22 @@ function syncAllLive(){
   shareChain=shareChain.then(async()=>{ await Promise.all(live.map(pushLink)); saveShareLinks(); });
   return shareChain;
 }
-async function revokeLink(token){
+/* remove a link from MY list. A LIVE link is revoked on the server first so it
+   can't linger as a ghost (in the server but not my list); an already-dead
+   (revoked/expired) link is just spliced out locally. Only live removal confirms. */
+async function deleteLink(token){
   const l=state.shareLinks.find(x=>x.token===token); if(!l) return;
-  const ok=await showConfirm({title:'링크 폐기', msg:'이 링크를 폐기하면 받은 사람이 더는 못 봐요. 폐기할까요?', okLabel:'폐기'});
-  if(!ok) return;
-  let done=false;
-  try{ const res=await fetch('/api/share/'+encodeURIComponent(token),{method:'DELETE'}); done=res.ok; }
-  catch(e){ done=false; }
-  if(done){
-    // server marked it revoked (recipient now gets 410) → also drop it from my list
-    state.shareLinks=state.shareLinks.filter(x=>x.token!==token);
-    saveShareLinks(); renderLinks(); renderWarn();
-    toast('링크를 폐기했어요');
-  }else{
-    toast('폐기하지 못했어요. 잠시 후 다시 시도해 주세요');   // keep it (no ghost state)
+  if(isLinkLive(l)){
+    const ok=await showConfirm({title:'링크 삭제', msg:'이 링크를 삭제하면 받은 사람도 더는 못 봐요. 삭제할까요?', okLabel:'삭제'});
+    if(!ok) return;
+    let done=false;
+    try{ const res=await fetch('/api/share/'+encodeURIComponent(token),{method:'DELETE'}); done=res.ok; }
+    catch(e){ done=false; }
+    if(!done){ toast('삭제하지 못했어요. 잠시 후 다시 시도해 주세요'); return; }   // no ghost state
   }
+  state.shareLinks=state.shareLinks.filter(x=>x.token!==token);   // dead → local only; live → server already revoked
+  saveShareLinks(); renderLinks(); renderWarn();
+  toast('목록에서 삭제했어요');
 }
 
 /* ---------- share sheet body (built in JS so we never touch the markup export) ---------- */
@@ -1207,8 +1213,8 @@ function cardShell(l){
       <button data-act="copy"${live?'':' disabled'}>링크 복사</button>
       <button data-act="open"${live?'':' disabled'}>열기</button>
       ${revoked?'':'<button data-act="expiry">만료 수정</button>'}
-      ${revoked?'':'<button data-act="revoke" class="danger">폐기</button>'}
       <button data-act="toggle">코멘트 보기</button>
+      <button data-act="delete" class="danger">${live?'삭제':'목록에서 삭제'}</button>
     </div>
     <div class="lcard-cmts" hidden><p class="lc-note">불러오는 중…</p></div>
   </div>`;
@@ -1222,7 +1228,7 @@ function wireLinkCards(){
       if(act==='copy') copyText(l.url);
       else if(act==='open'){ if(l.url) window.open(l.url,'_blank','noopener'); }
       else if(act==='expiry') editExpiry(token,card);
-      else if(act==='revoke') revokeLink(token);
+      else if(act==='delete') deleteLink(token);
       else if(act==='toggle'){
         const body=card.querySelector('.lcard-cmts'), closed=body.hasAttribute('hidden');
         if(closed){ body.removeAttribute('hidden'); b.textContent='코멘트 접기'; }
