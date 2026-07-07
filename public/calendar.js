@@ -134,9 +134,7 @@ let monthDragMoved=false, keepScroll=null;
 /* Which element actually scrolls the week grid: on mobile the whole .tg scrolls
    (header + body together); on desktop only the inner .tg-scroll scrolls vertically. */
 function tgScroller(){
-  const tl=$('#tlBody'); if(!tl) return null;
-  const mobile=window.matchMedia && window.matchMedia('(max-width:640px)').matches;
-  return (mobile ? tl.querySelector('.tg') : tl.querySelector('.tg-scroll')) || tl.querySelector('.tg-scroll');
+  const tl=$('#tlBody'); return tl ? tl.querySelector('.tg-daysscroll') : null;  // the single scroll pane (both axes)
 }
 function reRender(preserve){ if(preserve){const s=tgScroller(); keepScroll=s?{left:s.scrollLeft,top:s.scrollTop}:null;} renderMonth(); renderTimeline(); keepScroll=null; afterMutate(); refreshDaySheet(); }
 /* like reRender but WITHOUT persisting — used to show a pending drag position while
@@ -625,19 +623,19 @@ function renderTimeline(){
     while(maxH-minH<9){ if(minH>0)minH--; if(maxH-minH<9 && maxH<24)maxH++; if(minH===0&&maxH===24)break; }
     const HOURS=maxH-minH, PXH=40;                 // px per hour
 
-    // header row: weekday + date
-    let head=`<div class="tg-corner"></div>`;
+    // weekday header cells (the corner is a separate fixed pane now)
+    let headCells='';
     days.forEach(d=>{const di=iso(d),isT=di===today,isS=di===selIso,sun=d.getDay()===0,sat=d.getDay()===6,hol=HOLIDAYS[di];
-      head+=`<div class="tg-dh${isT?' today':''}${isS?' sel':''}${sun?' sun':''}${sat?' sat':''}${hol?' holiday':''}" data-date="${di}" ${hol?`title="${esc(hol)}"`:''}>
+      headCells+=`<div class="tg-dh${isT?' today':''}${isS?' sel':''}${sun?' sun':''}${sat?' sat':''}${hol?' holiday':''}" data-date="${di}" ${hol?`title="${esc(hol)}"`:''}>
         <span class="tg-dow">${WD[d.getDay()]}</span><span class="tg-dn">${d.getDate()}</span>${hol?`<span class="tg-hol">${esc(hol)}</span>`:''}</div>`;});
 
     // all-day / untimed strip (mine + friends')
     const untimedByDay=days.map(d=>state.events.filter(e=>e.date===iso(d)&&!e.time));
     const frUntimedByDay=days.map(d=>overlayEventsForDate(iso(d)).filter(o=>!o.e.time));
     const hasUntimed=untimedByDay.some(a=>a.length)||frUntimedByDay.some(a=>a.length);
-    let allday='';
+    let alldayCells='';
     if(hasUntimed){
-      allday=`<div class="tg-adlabel">종일</div>`+days.map((d,i)=>{
+      alldayCells=days.map((d,i)=>{
         const mineC=untimedByDay[i].map(e=>{const c=cat(e.catId);
           return `<div class="tg-chip" data-eid="${e.id}" style="--cat:${c.color};background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">${esc(e.title)}</div>`;}).join('');
         const frC=frUntimedByDay[i].map(o=>{const col=o.friend.color;
@@ -681,14 +679,17 @@ function renderTimeline(){
       colsHtml+=`<div class="tg-col${di===selIso?' sel':''}" data-date="${di}" data-minh="${minH}" style="height:${HOURS*PXH}px">${lines}${blocks}</div>`;
     });
 
+    // Frozen panes (auto-placed into a 40px|1fr grid): ONLY .tg-daysscroll scrolls,
+    // both axes. The weekday header and hour gutter are overflow-hidden panes we
+    // translate to match — no position:sticky (iOS-safe) and no touch-action:none
+    // on the scroller (Android vertical scroll works).
     $('#tlBody').innerHTML=`
-      <div class="tg" style="--pxh:${PXH}px">
-        <div class="tg-head">${head}</div>
-        ${hasUntimed?`<div class="tg-allday">${allday}</div>`:''}
-        <div class="tg-scroll"><div class="tg-body">
-          <div class="tg-gutter">${gutter}</div>
-          <div class="tg-cols">${colsHtml}</div>
-        </div></div>
+      <div class="tg${hasUntimed?' has-allday':''}" style="--pxh:${PXH}px">
+        <div class="tg-corner"></div>
+        <div class="tg-topscroll"><div class="tg-head">${headCells}</div></div>
+        ${hasUntimed?`<div class="tg-adlabel">종일</div><div class="tg-adscroll"><div class="tg-allday">${alldayCells}</div></div>`:''}
+        <div class="tg-gutcol"><div class="tg-gutter">${gutter}</div></div>
+        <div class="tg-daysscroll"><div class="tg-cols">${colsHtml}</div></div>
       </div>`;
     // scroll so the earliest event of the week is near the top
     const firstMin = timed.length ? Math.min(...timed.map(e=>timeToMin(e.time))) : minH*60;
@@ -701,6 +702,13 @@ function renderTimeline(){
         if(selCol){ const cr=selCol.getBoundingClientRect(), sr=sc.getBoundingClientRect();
           sc.scrollLeft += (cr.left - sr.left) - (sr.width - cr.width)/2; }
       }
+      // keep the header/gutter panes aligned with the day area as it scrolls
+      const hEl=$('#tlBody .tg-head'), adEl=$('#tlBody .tg-allday'), gEl=$('#tlBody .tg-gutter');
+      const syncPanes=()=>{ const tx='translateX('+(-sc.scrollLeft)+'px)';
+        if(hEl) hEl.style.transform=tx; if(adEl) adEl.style.transform=tx;
+        if(gEl) gEl.style.transform='translateY('+(-sc.scrollTop)+'px)'; };
+      sc.addEventListener('scroll',syncPanes,{passive:true});
+      syncPanes();
     }
     // wire drag + resize on blocks
     $$('#tlBody .tg-block[data-eid]').forEach(bl=>attachBlockInteract(bl,PXH,minH));
