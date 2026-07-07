@@ -518,6 +518,18 @@ input,textarea,select{font-size:16px}
 .fcat.pending{color:var(--ink-faint)}
 .dt-friend{font-size:9px;vertical-align:middle}
 
+/* home-widget picker (홈 위젯) */
+.wrow{display:flex;align-items:center;gap:12px;padding:12px 4px;border-bottom:1px solid var(--line-soft)}
+.wrow:first-child{border-top:1px solid var(--line-soft)}
+.wrow-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.wrow-name{font-size:14px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wrow-kind{font-size:11.5px;font-weight:600;color:var(--ink-faint)}
+.wrow-def{flex-shrink:0;font-size:12px;font-weight:600;padding:6px 11px;border:1px solid var(--line);border-radius:9px;
+  background:var(--panel);color:var(--ink-soft);cursor:pointer;transition:border-color .15s,color .15s,background .15s}
+.wrow-def:hover:not([disabled]){border-color:var(--ink-faint);color:var(--ink)}
+.wrow-def.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.wrow-def[disabled]{opacity:.4;cursor:not-allowed}
+
 /* header dropdown menu (다크모드·카테고리·내 공유 링크·받은 캘린더) */
 #menuBtn svg{width:18px;height:18px}
 .menu{position:fixed;z-index:60;min-width:236px;background:var(--panel);border:1px solid var(--line);

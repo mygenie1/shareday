@@ -89,12 +89,17 @@ function ensureMenu(){
     <button class="menu-item" id="miRecv" role="menuitem">
       <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
       <span class="mi-label">친구 캘린더</span>
+    </button>
+    <button class="menu-item" id="miWidget" role="menuitem">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      <span class="mi-label">홈 위젯</span>
     </button>`;
   document.body.appendChild(menu);
   $('#miTheme').onclick=()=>toggleTheme();            // keep menu open so the switch animates
   $('#miCats').onclick=()=>{closeMenu();openSettings();};
   $('#miLinks').onclick=()=>{closeMenu();openShare();};
   $('#miRecv').onclick=()=>{closeMenu();openRecv();};
+  $('#miWidget').onclick=()=>{closeMenu();openWidget();};
   syncMenuTheme();
 }
 function syncMenuTheme(){
@@ -1503,6 +1508,114 @@ async function renderRecv(){
   }));
 }
 
+/* ---------- home-screen widget bridge ----------
+   The widget shows PUBLIC snapshots only (share-link tokens) — never private
+   events (those live only in IndexedDB and never reach the server). Here the app
+   lets the user pick which public calendars the widget shows, and writes the
+   selection to the native shared store (iOS App Group / Android SharedPreferences)
+   via the WidgetBridge Capacitor plugin. On plain web the plugin is absent, so we
+   just persist the choice locally and show a hint. */
+const WIDGET_APP_GROUP='group.com.shareday.app';
+const WIDGET_KEY='shareday_widget';
+state.widgetConfig=null;   // {tokens:[{token,name,kind}], selectedIndex}
+function saveWidgetConfigLocal(){ idbSet('widgetConfig', state.widgetConfig); }
+function widgetBridge(){ return window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.WidgetBridge; }
+function widgetNative(){ return !!widgetBridge(); }
+/* the public calendars the widget can show: my live share links + saved friend links */
+function widgetOptions(){
+  const opts=[];
+  state.shareLinks.filter(isLinkLive).forEach(l=>opts.push({token:l.token, name:l.name||autoLinkName(), kind:'mine'}));
+  state.savedLinks.forEach(l=>opts.push({token:l.token, name:recvOwnerName(l), kind:'friend'}));
+  return opts;
+}
+async function pushWidget(){
+  const cfg=state.widgetConfig||{tokens:[],selectedIndex:0};
+  const payload={ tokens:cfg.tokens, selectedIndex:cfg.selectedIndex, base:location.origin, savedAt:Date.now() };
+  const br=widgetBridge();
+  if(br){
+    try{
+      await br.setItem({ group:WIDGET_APP_GROUP, key:WIDGET_KEY, value:JSON.stringify(payload) });
+      if(br.reloadAllTimelines) await br.reloadAllTimelines();     // iOS WidgetKit
+      if(br.updateWidget) await br.updateWidget();                 // Android
+    }catch(e){}
+  }
+}
+function ensureWidgetSheet(){
+  if(document.getElementById('widgetScrim')) return;
+  const scrim=document.createElement('div');
+  scrim.className='scrim'; scrim.id='widgetScrim';
+  scrim.innerHTML=`
+    <div class="sheet" role="dialog" aria-modal="true" style="max-width:460px">
+      <h2>홈 위젯</h2>
+      <p class="sub">홈 화면 위젯에 보여줄 <b>공개 캘린더</b>를 고르세요. 공개된 일정만 표시돼요 · 프라이빗은 위젯에 나오지 않아요.</p>
+      <div id="widgetHint"></div>
+      <div id="widgetList"></div>
+      <div class="sheet-actions">
+        <button class="btn ghost" id="widgetCancel">닫기</button>
+        <button class="btn solid" id="widgetSave" style="flex:1">위젯에 적용</button>
+      </div>
+    </div>`;
+  document.body.appendChild(scrim);
+  scrim.onclick=ev=>{ if(ev.target===scrim) closeScrim('#widgetScrim'); };
+  $('#widgetCancel').onclick=()=>closeScrim('#widgetScrim');
+  $('#widgetSave').onclick=saveWidgetChoice;
+}
+function openWidget(){ ensureWidgetSheet(); renderWidgetSheet(); openScrim('#widgetScrim'); }
+function renderWidgetSheet(){
+  const hint=$('#widgetHint');
+  hint.innerHTML = widgetNative()
+    ? ''
+    : `<div class="warn" style="color:var(--ink-soft);background:var(--accent-soft)"><svg viewBox="0 0 24 24" fill="none" style="stroke:var(--accent)"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/><path d="M14 4h7v7M3 20h7"/></svg>
+        홈 화면 위젯은 셰어데이 앱(위젯 지원 버전)에서 보여요. 선택은 저장돼 두었다가 앱에서 그대로 적용돼요.</div>`;
+  const opts=widgetOptions();
+  const list=$('#widgetList');
+  if(!opts.length){
+    list.innerHTML='<p class="links-empty">위젯에 넣을 공개 캘린더가 없어요. 먼저 내 캘린더를 공유하거나 친구 캘린더를 저장해 보세요.</p>';
+    return;
+  }
+  const cfg=state.widgetConfig||{tokens:[],selectedIndex:0};
+  const chosen=new Set((cfg.tokens||[]).map(t=>t.token));
+  const selToken=(cfg.tokens&&cfg.tokens[cfg.selectedIndex])?cfg.tokens[cfg.selectedIndex].token:null;
+  list.innerHTML=opts.map(o=>{
+    const on=chosen.has(o.token), isSel=o.token===selToken;
+    const badge=o.kind==='mine'?'내 캘린더':'친구';
+    return `<div class="wrow" data-token="${o.token}">
+      <div class="switch${on?' on':''}" data-inc role="switch" aria-checked="${on}"></div>
+      <div class="wrow-main"><span class="wrow-name">${esc(o.name)}</span><span class="wrow-kind">${badge}</span></div>
+      <button class="wrow-def${isSel?' on':''}" data-def ${on?'':'disabled'}>${isSel?'기본 ✓':'기본으로'}</button>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('.wrow').forEach(row=>{
+    const token=row.dataset.token;
+    row.querySelector('[data-inc]').onclick=function(){
+      const nowOn=!this.classList.contains('on');
+      this.classList.toggle('on',nowOn); this.setAttribute('aria-checked',nowOn);
+      const def=row.querySelector('[data-def]'); if(def) def.disabled=!nowOn;
+    };
+    const def=row.querySelector('[data-def]');
+    if(def) def.onclick=()=>{
+      list.querySelectorAll('.wrow-def').forEach(b=>{ b.classList.remove('on'); b.textContent='기본으로'; });
+      def.classList.add('on'); def.textContent='기본 ✓';
+    };
+  });
+}
+async function saveWidgetChoice(){
+  const rows=[...document.querySelectorAll('#widgetList .wrow')];
+  const opts=widgetOptions();
+  const tokens=[]; let selectedIndex=0;
+  rows.forEach(row=>{
+    const on=row.querySelector('[data-inc]').classList.contains('on');
+    if(!on) return;
+    const token=row.dataset.token, o=opts.find(x=>x.token===token);
+    if(o){ if(row.querySelector('[data-def]').classList.contains('on')) selectedIndex=tokens.length; tokens.push({token:o.token, name:o.name, kind:o.kind}); }
+  });
+  state.widgetConfig={tokens, selectedIndex};
+  saveWidgetConfigLocal();
+  await pushWidget();
+  closeScrim('#widgetScrim');
+  toast(tokens.length?(widgetNative()?'위젯에 적용했어요':'위젯 캘린더를 저장했어요'):'위젯에서 캘린더를 비웠어요');
+}
+
 /* ---------- holidays (server-cached) ---------- */
 const HOLIDAYS={};
 const holidayYears=new Set();
@@ -1519,8 +1632,8 @@ function ensureHolidays(year){
 
 /* ---------- boot ---------- */
 async function loadState(){
-  const [ev,cats,links,seen,saved]=await Promise.all([
-    idbGet('events'),idbGet('categories'),idbGet('shareLinks'),idbGet('cmtSeenAt'),idbGet('savedLinks')
+  const [ev,cats,links,seen,saved,widget]=await Promise.all([
+    idbGet('events'),idbGet('categories'),idbGet('shareLinks'),idbGet('cmtSeenAt'),idbGet('savedLinks'),idbGet('widgetConfig')
   ]);
   if(Array.isArray(cats)&&cats.length) state.categories=cats;
   if(Array.isArray(ev)) state.events=ev;          // stored (even empty) → respect it
@@ -1528,6 +1641,7 @@ async function loadState(){
   if(Array.isArray(links)) state.shareLinks=links;
   if(typeof seen==='number') state.cmtSeenAt=seen;
   if(Array.isArray(saved)) state.savedLinks=saved;
+  if(widget&&Array.isArray(widget.tokens)) state.widgetConfig=widget;
 }
 function hideBootLoading(){
   const bl=document.getElementById('bootLoading'); if(!bl) return;

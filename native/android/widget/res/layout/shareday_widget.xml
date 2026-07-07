@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- res/layout/shareday_widget.xml — RemoteViews can't loop, so 4 fixed rows are
+     shown/hidden by WidgetFetchWorker. Each row has distinct ids (dot/title/time). -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_bg"
+    android:padding="12dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="6dp">
+
+        <TextView
+            android:id="@+id/widget_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="셰어데이"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textColor="#8A9AA0" />
+
+        <ImageView
+            android:id="@+id/widget_cycle"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@android:drawable/ic_menu_rotate"
+            android:visibility="gone"
+            android:contentDescription="다음 캘린더" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_msg"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="오늘 공개된 일정이 없어요."
+        android:textSize="11sp"
+        android:textColor="#8A9AA0"
+        android:layout_marginTop="6dp"
+        android:visibility="gone" />
+
+    <!-- row 0 -->
+    <LinearLayout android:id="@+id/row0" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="4dp" android:visibility="gone">
+        <ImageView android:id="@+id/dot0" android:layout_width="7dp" android:layout_height="7dp" android:src="@drawable/widget_dot" android:layout_marginEnd="6dp" />
+        <TextView android:id="@+id/title0" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:maxLines="1" android:ellipsize="end" android:textSize="11sp" android:textStyle="bold" android:textColor="#F2F2F4" />
+        <TextView android:id="@+id/time0" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:maxLines="1" android:textSize="10sp" android:textColor="#8A9AA0" />
+    </LinearLayout>
+    <!-- row 1 -->
+    <LinearLayout android:id="@+id/row1" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="4dp" android:visibility="gone">
+        <ImageView android:id="@+id/dot1" android:layout_width="7dp" android:layout_height="7dp" android:src="@drawable/widget_dot" android:layout_marginEnd="6dp" />
+        <TextView android:id="@+id/title1" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:maxLines="1" android:ellipsize="end" android:textSize="11sp" android:textStyle="bold" android:textColor="#F2F2F4" />
+        <TextView android:id="@+id/time1" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:maxLines="1" android:textSize="10sp" android:textColor="#8A9AA0" />
+    </LinearLayout>
+    <!-- row 2 -->
+    <LinearLayout android:id="@+id/row2" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="4dp" android:visibility="gone">
+        <ImageView android:id="@+id/dot2" android:layout_width="7dp" android:layout_height="7dp" android:src="@drawable/widget_dot" android:layout_marginEnd="6dp" />
+        <TextView android:id="@+id/title2" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:maxLines="1" android:ellipsize="end" android:textSize="11sp" android:textStyle="bold" android:textColor="#F2F2F4" />
+        <TextView android:id="@+id/time2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:maxLines="1" android:textSize="10sp" android:textColor="#8A9AA0" />
+    </LinearLayout>
+    <!-- row 3 -->
+    <LinearLayout android:id="@+id/row3" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="4dp" android:visibility="gone">
+        <ImageView android:id="@+id/dot3" android:layout_width="7dp" android:layout_height="7dp" android:src="@drawable/widget_dot" android:layout_marginEnd="6dp" />
+        <TextView android:id="@+id/title3" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:maxLines="1" android:ellipsize="end" android:textSize="11sp" android:textStyle="bold" android:textColor="#F2F2F4" />
+        <TextView android:id="@+id/time3" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:maxLines="1" android:textSize="10sp" android:textColor="#8A9AA0" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_more"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="10sp"
+        android:textColor="#8A9AA0"
+        android:layout_marginTop="2dp"
+        android:visibility="gone" />
+</LinearLayout>

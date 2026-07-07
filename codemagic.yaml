@@ -1,0 +1,84 @@
+# Codemagic CI/CD for the Capacitor shell + native widgets.
+# Cloud build (no local Mac needed). Assumes the ios/ and android/ Capacitor
+# projects are COMMITTED (generated once via `npx cap add`, with the widget targets
+# added — see WIDGETS.md). Builds run `cap sync`, not `cap add`, so native edits
+# (widget extension, manifest, plugin registration) are preserved.
+#
+# Set these in Codemagic → each app's Environment variables (mark secrets "Secure"):
+#   Android group "shareday_android": CM_KEYSTORE (base64 .jks), CM_KEYSTORE_PASSWORD,
+#     CM_KEY_ALIAS, CM_KEY_PASSWORD, GCLOUD_SERVICE_ACCOUNT_CREDENTIALS (Play JSON).
+#   iOS group "shareday_ios": APP_STORE_CONNECT_ISSUER_ID, APP_STORE_CONNECT_KEY_IDENTIFIER,
+#     APP_STORE_CONNECT_PRIVATE_KEY, plus a matching Distribution + Widget provisioning profile.
+# NEVER commit these values.
+
+workflows:
+  android-internal:
+    name: ShareDay Android — Play internal
+    max_build_duration: 60
+    instance_type: linux_x2
+    environment:
+      groups:
+        - shareday_android
+      node: 20
+      java: 17
+    scripts:
+      - name: Install JS deps
+        script: npm ci
+      - name: Capacitor sync (platforms are committed)
+        script: npx cap sync android
+      - name: Decode keystore
+        script: |
+          echo "$CM_KEYSTORE" | base64 --decode > "$CM_BUILD_DIR/android/app/release.keystore"
+          cat >> "$CM_BUILD_DIR/android/keystore.properties" <<EOF
+          storeFile=release.keystore
+          storePassword=$CM_KEYSTORE_PASSWORD
+          keyAlias=$CM_KEY_ALIAS
+          keyPassword=$CM_KEY_PASSWORD
+          EOF
+      - name: Build release AAB
+        script: |
+          cd android
+          ./gradlew bundleRelease
+    artifacts:
+      - android/app/build/outputs/**/*.aab
+    publishing:
+      google_play:
+        credentials: $GCLOUD_SERVICE_ACCOUNT_CREDENTIALS
+        track: internal
+        submit_as_draft: true
+
+  ios-testflight:
+    name: ShareDay iOS — TestFlight
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+    integrations:
+      app_store_connect: shareday_asc_key   # configure the ASC API key integration in Codemagic
+    environment:
+      groups:
+        - shareday_ios
+      node: 20
+      xcode: latest
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.shareday.app   # also add the widget extension id com.shareday.app.ShareDayWidget
+    scripts:
+      - name: Install JS deps
+        script: npm ci
+      - name: Capacitor sync (platforms are committed)
+        script: npx cap sync ios
+      - name: Pods
+        script: cd ios/App && pod install
+      - name: Set up signing
+        script: xcode-project use-profiles
+      - name: Build IPA
+        script: |
+          xcode-project build-ipa \
+            --workspace "ios/App/App.xcworkspace" \
+            --scheme "App"
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true

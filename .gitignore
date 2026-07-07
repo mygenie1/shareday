@@ -29,3 +29,18 @@ next-env.d.ts
 
 # original Claude Design export (kept out of the app build)
 셰어데이 캘린더.html
+
+# capacitor native build artifacts (the ios/ and android/ project files ARE committed
+# after `npx cap add`; only generated build output + local machine files are ignored)
+/ios/App/Pods/
+/ios/App/App/public/
+/ios/App/build/
+/ios/DerivedData/
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/app/src/main/assets/public/
+/android/local.properties
+/android/.idea/
+/android/captures/
+.env.capacitor
