@@ -137,9 +137,6 @@ function tgScroller(){
   const tl=$('#tlBody'); return tl ? tl.querySelector('.tg-daysscroll') : null;  // the single scroll pane (both axes)
 }
 function reRender(preserve){ if(preserve){const s=tgScroller(); keepScroll=s?{left:s.scrollLeft,top:s.scrollTop}:null;} renderMonth(); renderTimeline(); keepScroll=null; afterMutate(); refreshDaySheet(); }
-/* like reRender but WITHOUT persisting — used to show a pending drag position while
-   the confirm dialog is open, so a cancelled move never touches storage/links */
-function paint(preserve){ if(preserve){const s=tgScroller(); keepScroll=s?{left:s.scrollLeft,top:s.scrollTop}:null;} renderMonth(); renderTimeline(); keepScroll=null; refreshDaySheet(); }
 /* keep an open day sheet in sync after an edit/delete/date-move */
 function refreshDaySheet(){ const sc=document.getElementById('daySheetScrim'); if(sc&&sc.classList.contains('on')) openDaySheet(state.selected); }
 function renderMonth(){
@@ -239,9 +236,9 @@ function attachMonthDrag(){
             const el=document.elementFromPoint(mv.clientX,mv.clientY);
             const cell=el&&el.closest?el.closest('#daysGrid .cell'):null;
             if(cell&&cell.dataset.date&&cell.dataset.date!==e.date){
-              const target=cell.dataset.date;
-              showConfirm({title:'날짜 옮기기', msg:`'${e.title}'을(를) ${fmtDateK(target)}로 옮길까요?`, okLabel:'옮기기'})
-                .then(ok=>{ if(ok){ e.date=target; renderMonth(); renderTimeline(); afterMutate(); toast('날짜를 옮겼어요'); } });
+              const prevDate=e.date, target=cell.dataset.date;   // long-press = intent; commit now, offer undo
+              e.date=target; renderMonth(); renderTimeline(); afterMutate();
+              toastUndo('날짜를 옮겼어요', ()=>{ e.date=prevDate; renderMonth(); renderTimeline(); afterMutate(); });
             }
           }
           setTimeout(()=>{monthDragMoved=false;},0);   // always clear the click-guard once armed
@@ -283,7 +280,6 @@ function renderFriendLegend(){
   if(off) off.onclick=()=>{ state.savedLinks.forEach(l=>l.overlay=false); saveSavedLinks(); state.overlayCache={}; refreshOverlays(); toast('내 일정만 보기로 전환했어요'); };
 }
 function esc(s){return (s||'').replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));}
-function fmtDateK(isoStr){const[y,m,d]=isoStr.split('-').map(Number);const wd=['일','월','화','수','목','금','토'][new Date(y,m-1,d).getDay()];return `${m}월 ${d}일 (${wd})`;}
 /* belt-and-braces: drop any stray text selection when a long-press begins (CSS
    user-select:none already prevents it starting on interactive chrome) */
 function clearSel(){ try{const s=window.getSelection&&window.getSelection(); if(s&&s.removeAllRanges) s.removeAllRanges();}catch(_){} }
@@ -737,6 +733,7 @@ function attachBlockInteract(bl,PXH,minH){
     const cols=[...$$('#tlBody .tg-col')];
     const startX=ev.clientX, startY=ev.clientY;
     const origStart=timeToMin(e.time), origEnd=e.end?timeToMin(e.end):origStart+60, origDate=e.date;
+    const prev0={time:e.time, end:e.end, date:e.date};   // exact pre-drag state, for undo
     let armed=false, moved=false, cancelled=false, lpTimer=0;
     const sc=tgScroller();
     let edgeDir=0, edgeRAF=0, lastEv=ev;
@@ -798,18 +795,10 @@ function attachBlockInteract(bl,PXH,minH){
       bl.classList.remove('pressing','dragging','armed');
       if(!armed){ if(!cancelled) openEventDetail(e.id); return; }   // quick tap → detail card
       if(!moved){ return; }                                         // long-pressed but not dragged → just drop, NO detail
-      // e currently holds the dropped values. Show them (no save), then confirm.
-      const proposed={time:e.time,end:e.end,date:e.date};
-      paint(true);
-      const when=`${proposed.time}${proposed.end?'–'+proposed.end:''}`;
-      const msg = mode==='move'
-        ? (proposed.date!==origDate ? `${fmtDateK(proposed.date)} ${when}로 옮길까요?` : `${when}로 옮길까요?`)
-        : `${when}로 바꿀까요?`;
-      showConfirm({title: mode==='move'?'시간 옮기기':'시간 바꾸기', msg, okLabel: mode==='move'?'옮기기':'바꾸기'})
-        .then(ok=>{
-          if(ok){ Object.assign(e,proposed); reRender(true); toast(mode==='move'?'일정을 옮겼어요':'시간을 바꿨어요'); }
-          else { e.time=minToTime(origStart); e.end=minToTime(origEnd); e.date=origDate; paint(true); }
-        });
+      // long-press already confirmed intent → commit immediately (e holds the new
+      // values), then offer undo. No confirm popup.
+      reRender(true);
+      toastUndo(mode==='move'?'일정을 옮겼어요':'시간을 바꿨어요', ()=>{ Object.assign(e,prev0); reRender(true); });
     }
     document.addEventListener('pointermove',move);
     document.addEventListener('pointerup',up,{once:true});
@@ -1035,6 +1024,15 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'){
 /* ---------- toast ---------- */
 let tT;
 function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('on');clearTimeout(tT);tT=setTimeout(()=>t.classList.remove('on'),1900);}
+/* toast with a right-side "실행취소" action; auto-confirms after ~5s if untouched */
+function toastUndo(msg,onUndo){
+  const t=$('#toast');
+  t.innerHTML='<span class="toast-msg"></span><button class="toast-act" type="button">실행취소</button>';
+  t.querySelector('.toast-msg').textContent=msg;
+  let used=false;
+  t.querySelector('.toast-act').onclick=()=>{ if(used) return; used=true; clearTimeout(tT); t.classList.remove('on'); if(onUndo) onUndo(); };
+  t.classList.add('on'); clearTimeout(tT); tT=setTimeout(()=>t.classList.remove('on'),5000);
+}
 
 /* ============================================================
    BACKEND INTEGRATION  (added for the deployable app)
