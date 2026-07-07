@@ -3,8 +3,11 @@
 기존 웹앱은 그대로 두고, **Capacitor**로 네이티브 껍데기를 만들어 **홈 화면 위젯**을 iOS·안드로이드에 붙인다.
 위젯은 **서버의 공개 스냅샷(`GET /api/share/[token]`)만** 읽는다 — 프라이빗 일정은 위젯에 절대 안 뜬다(로컬 전용).
 
-> 이 저장소에는 **웹 브리지(완성·검증됨)** + **네이티브 위젯/플러그인 소스(`native/`)** + **`codemagic.yaml`** 이 들어 있다.
-> 아래 단계는 **Mac/Android Studio/Xcode/Codemagic**에서 수행한다(웹 저장소만으로는 네이티브 빌드가 안 됨).
+> 현재 상태:
+> - **웹 브리지**: 완성·검증됨(`public/calendar.js`, 메뉴 "홈 위젯").
+> - **안드로이드**: `npx cap add android` 로 `android/` 생성 완료 + **위젯이 이미 통합돼 있음**(Java 위젯 provider/worker/plugin, res, Manifest receiver+딥링크, MainActivity `registerPlugin`, WorkManager 의존성). → **Android Studio에서 `android/` 열어 빌드만** 하면 됨.
+> - **iOS**: 소스는 `native/ios/`에 스테이징. Mac에서 `npx cap add ios` 후 STEP 2대로 위젯 타깃·App Group 추가.
+> - ⚠️ 안드로이드 통합은 이 저장소(웹/Windows, JDK·SDK 없음)에서 **컴파일 검증은 못 함** — Android Studio에서 빌드하며 확인 필요.
 
 ---
 
@@ -28,11 +31,12 @@
 ## STEP 0. 사전 준비 (한 번)
 ```bash
 npm install                 # @capacitor/* 설치 (package.json에 추가돼 있음)
-npx cap add ios             # ios/  프로젝트 생성 (Mac 필요)
-npx cap add android         # android/ 프로젝트 생성
+# android/ 는 이미 생성·통합·커밋됨 → 재실행 불필요. 웹 바뀌면: npx cap sync android
+npx cap add ios             # ios/ 프로젝트 생성 (Mac 필요)
 npx cap sync
 ```
-> `ios/`·`android/`는 생성 후 **커밋**한다(Codemagic이 그대로 빌드). 이후엔 `npx cap sync`만.
+> `ios/`도 생성 후 **커밋**한다(Codemagic이 그대로 빌드). 이후엔 `npx cap sync`만.
+> **안드로이드는 STEP 1~3이 이미 적용돼 있음** — 아래 Android 세부는 "무엇이 어디 있는지" 참고용. 바로 STEP 4 또는 `android/`를 Studio에서 빌드.
 
 ---
 
