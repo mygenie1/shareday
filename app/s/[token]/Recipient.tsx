@@ -191,6 +191,13 @@ export default function Recipient({
   const colorOf = (catId?: string) =>
     catMap.get(catId || "")?.color || "#64748B";
 
+  // legend of the owner's categories that actually appear here (color = name),
+  // so a recipient reads meaning, not just colors
+  const usedCategories = useMemo(() => {
+    const ids = new Set(events.map((e) => e.catId).filter(Boolean) as string[]);
+    return categories.filter((c) => ids.has(c.id) && c.name);
+  }, [events, categories]);
+
   // events grouped by date, each list sorted by time
   const byDate = useMemo(() => {
     const groups = new Map<string, RecipientEvent[]>();
@@ -298,6 +305,22 @@ export default function Recipient({
         </span>
         <SaveButton token={token} ownerName={ownerName} />
       </div>
+
+      {/* ── category legend (color = name) ── */}
+      {usedCategories.length > 0 && (
+        <div className="rc-legend">
+          <span className="rc-legend-lbl">카테고리</span>
+          {usedCategories.map((c) => (
+            <span className="rc-legend-tag" key={c.id}>
+              <span
+                className="rc-legend-dot"
+                style={{ background: c.color || "#64748B" }}
+              />
+              {c.name}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* ── 2. month calendar ── */}
       <section className="rc-cal card">

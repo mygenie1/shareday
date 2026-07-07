@@ -32,7 +32,9 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#10B981",
+  // The mobile browser chrome bar stays neutral (matches the app background) instead
+  // of brand green, so category colors lead. The deep-green logo is unchanged.
+  // The exact per-theme color is set by the head script below (honors a saved theme).
 };
 
 export default function RootLayout({
@@ -48,7 +50,7 @@ export default function RootLayout({
         <script
           dangerouslySetInnerHTML={{
             __html:
-              "(function(){try{var t=localStorage.getItem('shareday-theme');if(t!=='dark'&&t!=='light'){t=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';}document.documentElement.setAttribute('data-theme',t);}catch(e){}})();",
+              "(function(){try{var t=localStorage.getItem('shareday-theme');if(t!=='dark'&&t!=='light'){t=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';}document.documentElement.setAttribute('data-theme',t);var m=document.createElement('meta');m.name='theme-color';m.content=t==='dark'?'#000000':'#EFFBF3';document.head.appendChild(m);}catch(e){}})();",
           }}
         />
         <link

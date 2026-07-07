@@ -51,6 +51,8 @@ const isDark=()=>state.theme==='dark';
 /* ---------- theme ---------- */
 function applyTheme(){
   document.documentElement.setAttribute('data-theme',state.theme);
+  const m=document.querySelector('meta[name="theme-color"]');   // keep the browser chrome bar neutral per theme
+  if(m) m.setAttribute('content', isDark()?'#000000':'#EFFBF3');
   syncMenuTheme();                 // header menu row reflects the current mode
   renderMonth(); renderLegend();
 }
@@ -85,8 +87,8 @@ function ensureMenu(){
       <span class="mi-label">내 공유 링크</span>
     </button>
     <button class="menu-item" id="miRecv" role="menuitem">
-      <svg viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-      <span class="mi-label">받은 캘린더</span>
+      <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      <span class="mi-label">친구 캘린더</span>
     </button>`;
   document.body.appendChild(menu);
   $('#miTheme').onclick=()=>toggleTheme();            // keep menu open so the switch animates
@@ -136,6 +138,9 @@ function tgScroller(){
   return (mobile ? tl.querySelector('.tg') : tl.querySelector('.tg-scroll')) || tl.querySelector('.tg-scroll');
 }
 function reRender(preserve){ if(preserve){const s=tgScroller(); keepScroll=s?{left:s.scrollLeft,top:s.scrollTop}:null;} renderMonth(); renderTimeline(); keepScroll=null; afterMutate(); refreshDaySheet(); }
+/* like reRender but WITHOUT persisting — used to show a pending drag position while
+   the confirm dialog is open, so a cancelled move never touches storage/links */
+function paint(preserve){ if(preserve){const s=tgScroller(); keepScroll=s?{left:s.scrollLeft,top:s.scrollTop}:null;} renderMonth(); renderTimeline(); keepScroll=null; refreshDaySheet(); }
 /* keep an open day sheet in sync after an edit/delete/date-move */
 function refreshDaySheet(){ const sc=document.getElementById('daySheetScrim'); if(sc&&sc.classList.contains('on')) openDaySheet(state.selected); }
 function renderMonth(){
@@ -148,13 +153,21 @@ function renderMonth(){
   for(let i=0;i<42;i++){
     const d=new Date(start); d.setDate(start.getDate()+i);
     const di=iso(d), out=d.getMonth()!==m, sun=d.getDay()===0, sat=d.getDay()===6, hol=HOLIDAYS[di];
-    const evs=state.events.filter(e=>e.date===di).sort((a,b)=>(a.time||'').localeCompare(b.time||''));
-    const shown=evs.slice(0,2), extra=evs.length-shown.length;
+    const mineList=state.events.filter(e=>e.date===di).map(e=>({e,mine:true}));
+    const frList=overlayEventsForDate(di).map(o=>({e:o.e,mine:false,friend:o.friend}));
+    const all=[...mineList,...frList].sort((a,b)=>(a.e.time||'').localeCompare(b.e.time||''));
+    const shown=all.slice(0,2), extra=all.length-shown.length;
     const selIso=iso(state.selected);
-    const chips=shown.map(e=>{const c=cat(e.catId);
-      return `<div class="chip" data-eid="${e.id}" style="--cat:${c.color};background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">
+    const chips=shown.map(it=>{const e=it.e;
+      if(it.mine){const c=cat(e.catId);
+        return `<div class="chip" data-eid="${e.id}" style="--cat:${c.color};background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">
         <span style="overflow:hidden;text-overflow:ellipsis">${esc(e.title)}</span>
         ${e.isPrivate?'<svg class="svg lk" viewBox="0 0 24 24" style="width:10px;height:10px;stroke-width:2.4"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}</div>`;
+      }
+      const col=it.friend.color;   // friend event: source-colored, read-only
+      return `<div class="chip friend" data-ftoken="${it.friend.token}" data-feid="${e.id}" style="--cat:${col};background:${tint(col,isDark())};color:${inkOn(col,isDark())}">
+        <span class="fdot" style="background:${col}"></span>
+        <span style="overflow:hidden;text-overflow:ellipsis">${esc(e.title)}</span></div>`;
     }).join('');
     html+=`<div class="cell${out?' out':''}${di===todayIso?' today':''}${sun?' sun':''}${sat?' sat':''}${hol?' holiday':''}${di===selIso?' sel':''}" data-date="${di}" ${hol?`title="${esc(hol)}"`:''}>
       <div class="dn">${d.getDate()}</div>
@@ -166,7 +179,9 @@ function renderMonth(){
     c.onclick=(ev)=>{
       if(monthDragMoved) return;                          // just finished a drag → ignore the click
       const chip=ev.target.closest('.chip');
-      if(chip){openEventDetail(chip.dataset.eid);return;} // tap an event → detail mini-card (not edit)
+      if(chip){ if(chip.dataset.eid) openEventDetail(chip.dataset.eid);            // my event → detail mini-card
+                else if(chip.dataset.ftoken) openFriendDetail(chip.dataset.ftoken,chip.dataset.feid); // friend event → read-only
+                return; }
       const di=c.dataset.date, d=new Date(di+'T00:00:00');
       const armed=state.armedDate===di;                    // 2nd tap on the same day → open its list
       state.selected=d; state.armedDate=di;                // 1st tap: just select + focus this day
@@ -177,8 +192,10 @@ function renderMonth(){
     };
   });
   attachMonthDrag();
+  attachMonthSwipe();
 }
-/* month: drag a chip to another day → change its date (time unchanged) */
+/* month: LONG-PRESS a chip to pick it up, drag to another day, then confirm.
+   A short tap opens the detail card; moving before the press completes is a scroll. */
 function attachMonthDrag(){
   $$('#daysGrid .chip[data-eid]').forEach(chip=>{
     chip.addEventListener('pointerdown',ev=>{
@@ -187,35 +204,47 @@ function attachMonthDrag(){
       const startX=ev.clientX, startY=ev.clientY;
       const gr=chip.getBoundingClientRect();
       const offX=ev.clientX-gr.left, offY=ev.clientY-gr.top;   // grab point → clone stays under the finger
-      let dragging=false, clone=null, lastCell=null;
+      let armed=false, dragging=false, cancelled=false, clone=null, lastCell=null, lpTimer=0;
       try{chip.setPointerCapture(ev.pointerId);}catch(_){}
+      lpTimer=setTimeout(()=>{
+        if(cancelled) return;
+        armed=true; monthDragMoved=true;                       // suppress the trailing click
+        if(navigator.vibrate) try{navigator.vibrate(15);}catch(_){}
+        clone=chip.cloneNode(true);                             // floating "lifted" copy
+        Object.assign(clone.style,{position:'fixed',left:gr.left+'px',top:gr.top+'px',width:gr.width+'px',
+          margin:'0',zIndex:'999',pointerEvents:'none',opacity:'.96',transform:'scale(1.05)',
+          boxShadow:'0 10px 24px -4px rgba(35,34,29,.4)'});
+        document.body.appendChild(clone); chip.style.opacity='.28';
+        toast('끌어서 날짜를 옮겨요');
+      },450);
       function mv2(mv){
         const dx=mv.clientX-startX, dy=mv.clientY-startY;
-        if(!dragging && (Math.abs(dx)>4||Math.abs(dy)>4)){
-          dragging=true; monthDragMoved=true;
-          clone=chip.cloneNode(true);
-          // match the week block's lift: same width, no scale jump, sits where grabbed
-          Object.assign(clone.style,{position:'fixed',left:gr.left+'px',top:gr.top+'px',width:gr.width+'px',
-            margin:'0',zIndex:'999',pointerEvents:'none',opacity:'.95',
-            boxShadow:'0 8px 20px -4px rgba(35,34,29,.32)',transform:'none'});
-          document.body.appendChild(clone); chip.style.opacity='.28';
+        if(!armed){
+          if(Math.abs(dx)>8||Math.abs(dy)>8){ cancelled=true; clearTimeout(lpTimer); }  // scroll/swipe, not a drag
+          return;
         }
-        if(dragging){
-          clone.style.left=(mv.clientX-offX)+'px'; clone.style.top=(mv.clientY-offY)+'px';
-          const el=document.elementFromPoint(mv.clientX,mv.clientY);
-          const cell=el&&el.closest?el.closest('#daysGrid .cell'):null;
-          if(cell!==lastCell){ if(lastCell) lastCell.style.boxShadow=''; lastCell=cell;
-            if(cell&&cell.dataset.date!==e.date) cell.style.boxShadow='inset 0 0 0 2px var(--accent)'; }
-        }
+        dragging=true;
+        clone.style.left=(mv.clientX-offX)+'px'; clone.style.top=(mv.clientY-offY)+'px';
+        const el=document.elementFromPoint(mv.clientX,mv.clientY);
+        const cell=el&&el.closest?el.closest('#daysGrid .cell'):null;
+        if(cell!==lastCell){ if(lastCell) lastCell.style.boxShadow=''; lastCell=cell;
+          if(cell&&cell.dataset.date!==e.date) cell.style.boxShadow='inset 0 0 0 2px var(--accent)'; }
       }
       function up2(mv){
+        clearTimeout(lpTimer);
         document.removeEventListener('pointermove',mv2);
         chip.style.opacity=''; if(lastCell) lastCell.style.boxShadow=''; if(clone) clone.remove();
-        if(dragging){
-          const el=document.elementFromPoint(mv.clientX,mv.clientY);
-          const cell=el&&el.closest?el.closest('#daysGrid .cell'):null;
-          if(cell&&cell.dataset.date&&cell.dataset.date!==e.date){ e.date=cell.dataset.date; renderMonth(); renderTimeline(); afterMutate(); toast('날짜를 옮겼어요'); }
-          setTimeout(()=>{monthDragMoved=false;},0);
+        if(armed){
+          if(dragging){
+            const el=document.elementFromPoint(mv.clientX,mv.clientY);
+            const cell=el&&el.closest?el.closest('#daysGrid .cell'):null;
+            if(cell&&cell.dataset.date&&cell.dataset.date!==e.date){
+              const target=cell.dataset.date;
+              showConfirm({title:'날짜 옮기기', msg:`'${e.title}'을(를) ${fmtDateK(target)}로 옮길까요?`, okLabel:'옮기기'})
+                .then(ok=>{ if(ok){ e.date=target; renderMonth(); renderTimeline(); afterMutate(); toast('날짜를 옮겼어요'); } });
+            }
+          }
+          setTimeout(()=>{monthDragMoved=false;},0);   // always clear the click-guard once armed
         }
       }
       document.addEventListener('pointermove',mv2);
@@ -225,13 +254,59 @@ function attachMonthDrag(){
   });
 }
 function renderLegend(){
-  $('#legend').innerHTML='<span class="lbl">카테고리</span>'+state.categories.map(c=>
+  let html='<span class="lbl">카테고리</span>'+state.categories.map(c=>
     `<span class="tag" style="--cat:${c.color};background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">
       ${esc(c.name)}</span>`).join('')
     +`<button class="gear" id="legendGear"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" stroke-linecap="round" stroke-linejoin="round"/></svg>편집</button>`;
+  // 겹쳐보기 active → show each friend source (color = 이름) + their category names
+  if(overlayOn()){
+    html+='<span class="legend-friends" id="legendFriends"></span>';
+  }
+  $('#legend').innerHTML=html;
   $('#legendGear').onclick=openSettings;
+  if(overlayOn()) renderFriendLegend();
+}
+/* per-friend legend row: colored name + that friend's category names (relative labels) */
+function renderFriendLegend(){
+  const box=document.getElementById('legendFriends'); if(!box) return;
+  const rows=activeFriends().map(l=>{
+    const c=state.overlayCache[l.token];
+    const col=(c&&c.color)||friendColorFor(l.token);
+    const name=(c&&c.name)||l.ownerName||'친구';
+    const catTags=(c&&c.ok)
+      ? Object.values(c.cats).filter(k=>k&&k.name).map(k=>`<span class="fcat">${esc(k.name)}</span>`).join('')
+      : '<span class="fcat pending">불러오는 중…</span>';
+    return `<span class="friend-row"><span class="friend-name" style="color:${col}"><span class="fdot" style="background:${col}"></span>${esc(name)}</span>${catTags}</span>`;
+  }).join('');
+  box.innerHTML=`<span class="legend-off" id="legendOff">겹쳐보기 끄기</span>${rows}`;
+  const off=document.getElementById('legendOff');
+  if(off) off.onclick=()=>{ state.savedLinks.forEach(l=>l.overlay=false); saveSavedLinks(); state.overlayCache={}; refreshOverlays(); toast('내 일정만 보기로 전환했어요'); };
 }
 function esc(s){return (s||'').replace(/[&<>"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));}
+function fmtDateK(isoStr){const[y,m,d]=isoStr.split('-').map(Number);const wd=['일','월','화','수','목','금','토'][new Date(y,m-1,d).getDay()];return `${m}월 ${d}일 (${wd})`;}
+
+/* month: swipe left/right to change month (touch only; arrows still work). Bound
+   once to the calendar card; chips own their own gesture so a chip-drag isn't a swipe. */
+function attachMonthSwipe(){
+  const card=$('#daysGrid') && $('#daysGrid').closest('.card');
+  if(!card || card.dataset.swipe) return;
+  card.dataset.swipe='1';
+  let sx=0,sy=0,st=0,tracking=false;
+  card.addEventListener('pointerdown',e=>{
+    if(e.pointerType==='mouse') return;              // mouse uses the ‹ › buttons
+    if(e.target.closest('.chip')) return;            // chip-drag owns that gesture
+    sx=e.clientX; sy=e.clientY; st=Date.now(); tracking=true;
+  });
+  card.addEventListener('pointerup',e=>{
+    if(!tracking) return; tracking=false;
+    const dx=e.clientX-sx, dy=e.clientY-sy;
+    if(Date.now()-st>600) return;                    // too slow to be a flick
+    if(Math.abs(dx)<60 || Math.abs(dx)<Math.abs(dy)*1.6) return;   // must be clearly horizontal
+    state.view.setMonth(state.view.getMonth()+(dx<0?1:-1));
+    renderMonth();
+    monthDragMoved=true; setTimeout(()=>{monthDragMoved=false;},0);  // swallow the trailing click
+  });
+}
 
 $('#prevM').onclick=()=>{state.view.setMonth(state.view.getMonth()-1);renderMonth();};
 $('#nextM').onclick=()=>{state.view.setMonth(state.view.getMonth()+1);renderMonth();};
@@ -256,6 +331,7 @@ function openEventEdit(id,presetDate){
   const sw=$('#privSwitch');
   sw.classList.toggle('on',state.form.isPrivate);
   sw.setAttribute('aria-checked',state.form.isPrivate);
+  syncPrivHint();
   $('#evDelete').style.display=e?'block':'none';
   renderCatPick();
   buildQuickTime();
@@ -295,22 +371,28 @@ function ensureDetailModal(){
   scrim.className='scrim'; scrim.id='dtScrim';
   scrim.innerHTML=`
     <div class="sheet" role="dialog" aria-modal="true" style="max-width:420px">
-      <div class="dt-head"><span class="dt-dot" id="dtDot"></span><h2 id="dtTitle"></h2></div>
+      <div class="dt-head">
+        <span class="dt-dot" id="dtDot"></span><h2 id="dtTitle"></h2>
+        <button class="dt-more" id="dtMore" aria-label="더보기" aria-haspopup="true">
+          <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg></button>
+        <div class="dt-menu" id="dtMenu" role="menu">
+          <button id="dtEdit" role="menuitem">수정하기</button>
+          <button id="dtDelete" class="danger" role="menuitem">삭제하기</button>
+        </div>
+      </div>
       <div class="dt-when" id="dtWhen"></div>
       <div class="dt-cat" id="dtCat"></div>
       <p class="dt-memo" id="dtMemo"></p>
       <div class="dt-vis" id="dtVis"></div>
-      <div class="sheet-actions">
-        <button class="btn ghost" id="dtDelete" style="color:var(--danger)">삭제</button>
-        <button class="btn" id="dtClose">닫기</button>
-        <button class="btn solid" id="dtEdit">수정</button>
-      </div>
     </div>`;
   document.body.appendChild(scrim);
-  scrim.onclick=ev=>{ if(ev.target===scrim) closeScrim('#dtScrim'); };  // backdrop closes
-  $('#dtClose').onclick=()=>closeScrim('#dtScrim');
-  $('#dtEdit').onclick=()=>{ const id=state.detailId; closeScrim('#dtScrim'); openEventEdit(id); };
+  scrim.onclick=ev=>{ if(ev.target===scrim) closeScrim('#dtScrim'); };  // tap outside closes (no 닫기 button)
+  const more=$('#dtMore'), menu=$('#dtMenu');
+  more.onclick=ev=>{ ev.stopPropagation(); menu.classList.toggle('on'); };
+  scrim.querySelector('.sheet').addEventListener('click',ev=>{ if(!ev.target.closest('#dtMore')&&!ev.target.closest('#dtMenu')) menu.classList.remove('on'); });
+  $('#dtEdit').onclick=()=>{ const id=state.detailId; menu.classList.remove('on'); closeScrim('#dtScrim'); openEventEdit(id); };
   $('#dtDelete').onclick=async()=>{
+    menu.classList.remove('on');
     const e=state.events.find(x=>x.id===state.detailId); const nm=e?e.title:'이 일정';
     const ok=await showConfirm({title:'일정 삭제', msg:`'${nm}' 일정을 삭제할까요?`, okLabel:'삭제'});
     if(!ok) return;
@@ -321,6 +403,8 @@ function ensureDetailModal(){
 function openEventDetail(id){
   const e=state.events.find(x=>x.id===id); if(!e) return;
   ensureDetailModal();
+  const mn=document.getElementById('dtMenu'); if(mn) mn.classList.remove('on');   // start closed
+  const more=document.getElementById('dtMore'); if(more) more.style.display='';    // editable: show ⋯ (friend view hides it)
   state.detailId=id;
   const c=cat(e.catId);
   $('#dtDot').style.background=c.color;
@@ -381,10 +465,17 @@ function renderCatPick(){
   $$('#catPick .catopt[data-cid]').forEach(b=>b.onclick=()=>{state.form.catId=b.dataset.cid;renderCatPick();});
   $('#addCat').onclick=()=>openCatBuilder();
 }
+/* one-line explanation under the privacy toggle, reflecting the current choice */
+function syncPrivHint(){
+  const h=document.getElementById('privHint'); if(!h) return;
+  h.textContent=state.form.isPrivate ? '나만 볼 수 있어요 · 공유 링크에서 숨겨져요'
+                                     : '친구에게 보여요 · 공유 링크에 표시돼요';
+}
 $('#privSwitch').onclick=function(){
   state.form.isPrivate=!state.form.isPrivate;
   this.classList.toggle('on',state.form.isPrivate);
   this.setAttribute('aria-checked',state.form.isPrivate);
+  syncPrivHint();
 };
 function addMinT(t,min){let[h,m]=t.split(':').map(Number);let tot=h*60+m+min;tot=Math.max(0,Math.min(24*60-1,tot));return String(Math.floor(tot/60)).padStart(2,'0')+':'+String(tot%60).padStart(2,'0');}
 $('#fTime').oninput=function(){
@@ -444,25 +535,15 @@ function rowHtml(e){
 function renderTimeline(){
   const today=iso(new Date());
   const tl=$('#tlCard'); tl.classList.toggle('collapsed',state.tlCollapsed);
-  $('#tlToggle').setAttribute('aria-label',state.tlCollapsed?'타임라인 펼치기':'타임라인 접기');
-  $$('#tlSeg button').forEach(b=>b.classList.toggle('on',b.dataset.m===state.tlMode));
+  $('#tlToggle').setAttribute('aria-label',state.tlCollapsed?'주간 펼치기':'주간 접기');
   const byT=(a,b)=>(a.time||'99').localeCompare(b.time||'99');
 
-  if(state.tlMode==='day'){
-    const di=iso(state.selected);
-    const selHol=HOLIDAYS[di], selDow=state.selected.getDay();
-    const tt=$('#tlTitle');
-    tt.className='tl-title'+(selHol?' holiday':selDow===0?' sun':selDow===6?' sat':'');
-    tt.innerHTML=esc(dayLabel(state.selected,today))+(selHol?` <span class="tl-holname">· ${esc(selHol)}</span>`:'');
-    const evs=state.events.filter(e=>e.date===di).sort(byT);
-    $('#tlBody').innerHTML=(evs.length
-      ? evs.map(rowHtml).join('')
-      : `<div class="tl-empty">이 날은 일정이 없어요.</div>`)
-      + `<button class="tl-add" id="tlAdd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> 이 날에 추가</button>`;
-    const addBtn=$('#tlAdd'); if(addBtn) addBtn.onclick=()=>openEventEdit(null, iso(state.selected));
-  }else{
+  {
+    // Bottom section is the weekly time-grid only. "이 날" is reached by tapping a
+    // date on the month calendar → that day's sheet (no more day/week toggle).
     const [s,e0]=weekRange(state.selected);
-    $('#tlTitle').textContent=`${s.getMonth()+1}.${s.getDate()} – ${e0.getMonth()+1}.${e0.getDate()} 주간`;
+    const tt=$('#tlTitle'); tt.className='tl-title';
+    tt.textContent=`${s.getMonth()+1}.${s.getDate()} – ${e0.getMonth()+1}.${e0.getDate()} 주간`;
     const selIso=iso(state.selected);
     const WD=['일','월','화','수','목','금','토'];
     const days=[]; for(let i=0;i<7;i++){const d=new Date(s);d.setDate(s.getDate()+i);days.push(d);}
@@ -470,7 +551,9 @@ function renderTimeline(){
     // Visible window centers on the week's actual events but keeps ~3h of slack
     // above and below — enough empty grid to scroll into and to drag events onto
     // nearby hours, without unrolling the whole 24h. No events → a calm 08–19.
-    const timed=state.events.filter(e=>{const di=e.date;return e.time && days.some(d=>iso(d)===di);});
+    const dayIsos=days.map(iso);
+    const frTimedAll=dayIsos.flatMap(di=>overlayEventsForDate(di).filter(o=>o.e.time).map(o=>o.e));
+    const timed=state.events.filter(e=>e.time && dayIsos.includes(e.date)).concat(frTimedAll);  // friends widen the window too
     let minH,maxH;
     if(timed.length){
       let lo=24,hi=0;
@@ -490,15 +573,18 @@ function renderTimeline(){
       head+=`<div class="tg-dh${isT?' today':''}${isS?' sel':''}${sun?' sun':''}${sat?' sat':''}${hol?' holiday':''}" data-date="${di}" ${hol?`title="${esc(hol)}"`:''}>
         <span class="tg-dow">${WD[d.getDay()]}</span><span class="tg-dn">${d.getDate()}</span>${hol?`<span class="tg-hol">${esc(hol)}</span>`:''}</div>`;});
 
-    // all-day / untimed strip
-    const untimedByDay=days.map(d=>state.events.filter(e=>e.date===iso(d)&&!e.time).sort((a,b)=>0));
-    const hasUntimed=untimedByDay.some(a=>a.length);
+    // all-day / untimed strip (mine + friends')
+    const untimedByDay=days.map(d=>state.events.filter(e=>e.date===iso(d)&&!e.time));
+    const frUntimedByDay=days.map(d=>overlayEventsForDate(iso(d)).filter(o=>!o.e.time));
+    const hasUntimed=untimedByDay.some(a=>a.length)||frUntimedByDay.some(a=>a.length);
     let allday='';
     if(hasUntimed){
       allday=`<div class="tg-adlabel">종일</div>`+days.map((d,i)=>{
-        const evs=untimedByDay[i];
-        return `<div class="tg-adcell" data-date="${iso(d)}">${evs.map(e=>{const c=cat(e.catId);
-          return `<div class="tg-chip" data-eid="${e.id}" style="--cat:${c.color};background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">${esc(e.title)}</div>`;}).join('')}</div>`;
+        const mineC=untimedByDay[i].map(e=>{const c=cat(e.catId);
+          return `<div class="tg-chip" data-eid="${e.id}" style="--cat:${c.color};background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">${esc(e.title)}</div>`;}).join('');
+        const frC=frUntimedByDay[i].map(o=>{const col=o.friend.color;
+          return `<div class="tg-chip friend" data-ftoken="${o.friend.token}" data-feid="${o.e.id}" style="--cat:${col};background:${tint(col,isDark())};color:${inkOn(col,isDark())}"><span class="fdot" style="background:${col}"></span>${esc(o.e.title)}</div>`;}).join('');
+        return `<div class="tg-adcell" data-date="${iso(d)}">${mineC}${frC}</div>`;
       }).join('');
     }
 
@@ -510,24 +596,28 @@ function renderTimeline(){
     let colsHtml='';
     days.forEach(d=>{
       const di=iso(d);
-      const evs=state.events.filter(e=>e.date===di&&e.time).sort(byT);
-      // lane packing by real start/end
-      const laid=evs.map(e=>{const sh=timeToMin(e.time); const eh=e.end?timeToMin(e.end):sh+60; return {e,start:sh,end:Math.max(eh,sh+15)};});
+      const mineItems=state.events.filter(e=>e.date===di&&e.time).map(e=>({e,mine:true}));
+      const frItems=overlayEventsForDate(di).filter(o=>o.e.time).map(o=>({e:o.e,mine:false,friend:o.friend}));
+      const items=[...mineItems,...frItems].sort((a,b)=>byT(a.e,b.e));
+      // lane packing by real start/end (mine + friends' share lanes so nothing overlaps)
+      const laid=items.map(x=>{const sh=timeToMin(x.e.time); const eh=x.e.end?timeToMin(x.e.end):sh+60; return {e:x.e,mine:x.mine,friend:x.friend,start:sh,end:Math.max(eh,sh+15)};});
       laid.forEach((it,idx)=>{
         it.lane=0;
         for(let l=0;;l++){ if(!laid.some((o,j)=>j<idx&&o.lane===l&&o.end>it.start&&o.start<it.end)){it.lane=l;break;} }
       });
       laid.forEach(it=>{const maxLane=Math.max(...laid.filter(o=>o.end>it.start&&o.start<it.end).map(o=>o.lane))+1; it.lanes=maxLane;});
-      const blocks=laid.map(it=>{const e=it.e,c=cat(e.catId);
+      const blocks=laid.map(it=>{const e=it.e; const color=it.mine?cat(e.catId).color:it.friend.color;
         const top=(it.start-minH*60)/60*PXH, h=Math.max(20,(it.end-it.start)/60*PXH), w=100/it.lanes, left=it.lane*w;
         const showEnd=h>=34;
-        return `<div class="tg-block" data-eid="${e.id}" data-date="${di}" tabindex="0"
+        const attr=it.mine?`data-eid="${e.id}"`:`data-ftoken="${it.friend.token}" data-feid="${e.id}"`;
+        const fdot=it.mine?'':`<span class="fdot" style="background:${color}"></span>`;
+        return `<div class="tg-block${it.mine?'':' friend'}" ${attr} data-date="${di}" tabindex="0"
           style="top:${top}px;height:${h}px;left:${left}%;width:calc(${w}% - 3px);
-          --cat:${c.color};background:${tint(c.color,isDark())};border-left:3px solid ${c.color};color:${inkOn(c.color,isDark())}">
-          <span class="tg-grip tg-grip-top" data-grip="top"></span>
+          --cat:${color};background:${tint(color,isDark())};border-left:3px solid ${color};color:${inkOn(color,isDark())}">
+          ${it.mine?'<span class="tg-grip tg-grip-top" data-grip="top"></span>':''}
           <span class="tg-bt">${e.time}${showEnd&&e.end?'–'+e.end:''}</span>
-          <span class="tg-bn">${esc(e.title)}${e.memo?' <svg class="svg" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.2;display:inline;vertical-align:baseline"><path d="M4 6h16M4 12h16M4 18h10"/></svg>':''}${e.isPrivate?' <svg class="svg lk" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.4"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}</span>
-          <span class="tg-grip tg-grip-bot" data-grip="bot"></span>
+          <span class="tg-bn">${fdot}${esc(e.title)}${e.memo?' <svg class="svg" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.2;display:inline;vertical-align:baseline"><path d="M4 6h16M4 12h16M4 18h10"/></svg>':''}${(it.mine&&e.isPrivate)?' <svg class="svg lk" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.4"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}</span>
+          ${it.mine?'<span class="tg-grip tg-grip-bot" data-grip="bot"></span>':''}
         </div>`;}).join('');
       let lines=''; for(let hh=minH;hh<maxH;hh++) lines+=`<div class="tg-line" style="top:${(hh-minH)*PXH}px"></div>`;
       colsHtml+=`<div class="tg-col${di===selIso?' sel':''}" data-date="${di}" data-minh="${minH}" style="height:${HOURS*PXH}px">${lines}${blocks}</div>`;
@@ -558,6 +648,7 @@ function renderTimeline(){
     $$('#tlBody .tg-block[data-eid]').forEach(bl=>attachBlockInteract(bl,PXH,minH));
   }
   $$('#tlBody .tl-row[data-eid], #tlBody .tg-chip[data-eid]').forEach(r=>r.onclick=(ev)=>{ev.stopPropagation();openEventDetail(r.dataset.eid);});
+  $$('#tlBody .tg-block[data-ftoken], #tlBody .tg-chip[data-ftoken]').forEach(el=>el.onclick=(ev)=>{ev.stopPropagation();openFriendDetail(el.dataset.ftoken,el.dataset.feid);});
   $$('#tlBody .tg-dh[data-date]').forEach(col=>col.onclick=()=>{
     state.selected=new Date(col.dataset.date+'T00:00:00');
     renderMonth(); renderTimeline();
@@ -574,34 +665,30 @@ function attachBlockInteract(bl,PXH,minH){
     const grip=ev.target.getAttribute && ev.target.getAttribute('data-grip');
     const mode=grip?('resize-'+grip):'move';
     const e=state.events.find(x=>x.id===bl.dataset.eid); if(!e) return;
-    // 2-step edit: the FIRST press only "arms" the block (no time change) so a
-    // stray touch can't nudge it. A tap still opens the detail card. Once armed,
-    // the NEXT drag actually moves/resizes. reRender rebuilds blocks un-armed,
-    // so every edit is a deliberate press-then-drag.
-    if(!bl.classList.contains('armed')){
-      const sx=ev.clientX, sy=ev.clientY; let mv=false;
-      bl.classList.add('pressing');
-      try{bl.setPointerCapture(ev.pointerId);}catch(_){}
-      const m1=q=>{ if(Math.abs(q.clientX-sx)>4||Math.abs(q.clientY-sy)>4) mv=true; };
-      const u1=()=>{ document.removeEventListener('pointermove',m1); bl.classList.remove('pressing');
-        if(mv){ $$('#tlBody .tg-block.armed').forEach(x=>x.classList.remove('armed')); bl.classList.add('armed'); toast('한 번 더 끌어서 옮겨요'); }
-        else openEventDetail(e.id); };                 // no drag → treat as a tap → detail card
-      document.addEventListener('pointermove',m1);
-      document.addEventListener('pointerup',u1,{once:true});
-      ev.preventDefault(); ev.stopPropagation(); return;
-    }
+    // LONG-PRESS to pick up, then drag; a short tap opens the detail card. Moving
+    // before the press completes is a scroll. On drop we confirm before committing,
+    // so an accidental nudge is always recoverable.
     const cols=[...$$('#tlBody .tg-col')];
-    const colW=cols[0].getBoundingClientRect().width;
     const startX=ev.clientX, startY=ev.clientY;
-    const origStart=timeToMin(e.time), origEnd=e.end?timeToMin(e.end):origStart+60;
-    let moved=false, curDate=e.date;
-    try{bl.setPointerCapture(ev.pointerId);}catch(_){}
-    bl.classList.add('dragging');
+    const origStart=timeToMin(e.time), origEnd=e.end?timeToMin(e.end):origStart+60, origDate=e.date;
+    let armed=false, moved=false, cancelled=false, lpTimer=0;
     const sc=tgScroller();
     let edgeDir=0, edgeRAF=0, lastEv=ev;
+    try{bl.setPointerCapture(ev.pointerId);}catch(_){}
+    bl.classList.add('pressing');
+    lpTimer=setTimeout(()=>{
+      if(cancelled) return;
+      armed=true; bl.classList.remove('pressing'); bl.classList.add('dragging','armed');
+      if(navigator.vibrate) try{navigator.vibrate(15);}catch(_){}
+      toast(mode==='move'?'끌어서 옮겨요':'끌어서 시간을 바꿔요');
+    },450);
     function edgeLoop(){ if(!edgeDir||!sc){edgeRAF=0;return;} sc.scrollLeft+=edgeDir*12; applyMove(lastEv); edgeRAF=requestAnimationFrame(edgeLoop); }
-
-    function move(mv){ lastEv=mv; applyMove(mv); }
+    function move(mv){ lastEv=mv;
+      if(!armed){ const dx=mv.clientX-startX, dy=mv.clientY-startY;
+        if(Math.abs(dx)>8||Math.abs(dy)>8){ cancelled=true; clearTimeout(lpTimer); bl.classList.remove('pressing'); }
+        return; }
+      applyMove(mv);
+    }
     function applyMove(mv){
       const dx=mv.clientX-startX, dy=mv.clientY-startY;
       if(Math.abs(dx)>4||Math.abs(dy)>4) moved=true;
@@ -637,18 +724,30 @@ function attachBlockInteract(bl,PXH,minH){
       const lbl=bl.querySelector('.tg-bt'); if(lbl) lbl.textContent=e.time+(e.end?'–'+e.end:'');
     }
     function up(uv){
+      clearTimeout(lpTimer);
       document.removeEventListener('pointermove',move);
       edgeDir=0; if(edgeRAF) cancelAnimationFrame(edgeRAF);
-      bl.classList.remove('dragging');
-      if(!moved){ openEventDetail(e.id); }  // treat as click → detail mini-card
-      else { reRender(true); toast(mode==='move'?'일정을 옮겼어요':'시간을 바꿨어요'); }
+      bl.classList.remove('pressing','dragging','armed');
+      if(!armed){ if(!cancelled) openEventDetail(e.id); return; }   // quick tap → detail card
+      if(!moved){ openEventDetail(e.id); return; }                  // held but never dragged → detail
+      // e currently holds the dropped values. Show them (no save), then confirm.
+      const proposed={time:e.time,end:e.end,date:e.date};
+      paint(true);
+      const when=`${proposed.time}${proposed.end?'–'+proposed.end:''}`;
+      const msg = mode==='move'
+        ? (proposed.date!==origDate ? `${fmtDateK(proposed.date)} ${when}로 옮길까요?` : `${when}로 옮길까요?`)
+        : `${when}로 바꿀까요?`;
+      showConfirm({title: mode==='move'?'시간 옮기기':'시간 바꾸기', msg, okLabel: mode==='move'?'옮기기':'바꾸기'})
+        .then(ok=>{
+          if(ok){ Object.assign(e,proposed); reRender(true); toast(mode==='move'?'일정을 옮겼어요':'시간을 바꿨어요'); }
+          else { e.time=minToTime(origStart); e.end=minToTime(origEnd); e.date=origDate; paint(true); }
+        });
     }
     document.addEventListener('pointermove',move);
     document.addEventListener('pointerup',up,{once:true});
-    ev.preventDefault();
+    ev.preventDefault(); ev.stopPropagation();
   });
 }
-$$('#tlSeg button').forEach(b=>b.onclick=()=>{state.tlMode=b.dataset.m;renderTimeline();});
 $('#tlToggle').onclick=()=>{state.tlCollapsed=!state.tlCollapsed;renderTimeline();};
 $('#tlTitle').style.cursor='default';
 
@@ -659,20 +758,38 @@ function openCatBuilder(editId, fromSettings){
   state.catReturnSettings = !!fromSettings;
   state.newCat = e ? {color:e.color} : {color:'#10B981'};
   $('#catBuilderTitle').textContent = e ? '카테고리 수정' : '새 카테고리';
-  $('#cSave').textContent = e ? '저장' : '만들기';
+  $('#cSave').textContent = e ? '적용' : '만들기';
   $('#cName').value = e ? e.name : '';
   $('#palette').innerHTML=PALETTE.map(c=>`<div class="sw${c===state.newCat.color?' sel':''}" data-c="${c}" style="background:${c}"></div>`).join('')
     +`<label class="sw hex" title="직접 지정">#<input type="color" id="hexIn" style="position:absolute;opacity:0;width:28px;height:28px;cursor:pointer"></label>`;
   $$('#palette .sw[data-c]').forEach(x=>x.onclick=()=>{state.newCat.color=x.dataset.c;refreshCatBuilder();});
   $('#hexIn').oninput=ev=>{state.newCat.color=ev.target.value;refreshCatBuilder();};
+  ensureCatPreview(); renderCatPreview();
   checkDupe();
   openScrim('#catScrim'); setTimeout(()=>$('#cName').focus(),120);
 }
+/* live preview so a picked color is obviously reflected before saving */
+function ensureCatPreview(){
+  if(document.getElementById('catPreview')) return;
+  const pal=$('#palette'); if(!pal) return;
+  const wrap=document.createElement('div');
+  wrap.className='cat-preview'; wrap.id='catPreview';
+  pal.parentNode.insertBefore(wrap, pal.nextSibling);   // sits right below the swatches
+}
+function renderCatPreview(){
+  const el=document.getElementById('catPreview'); if(!el) return;
+  const color=state.newCat.color;
+  const name=($('#cName')&&$('#cName').value.trim())||'미리보기';
+  el.innerHTML=`<span class="cat-preview-lbl">미리보기</span>`+
+    `<span class="cat-preview-chip" style="--cat:${color};background:${tint(color,isDark())};color:${inkOn(color,isDark())}">`+
+      `<span class="cat-preview-dot" style="background:${color}"></span>${esc(name)}</span>`;
+}
 function refreshCatBuilder(){
   $$('#palette .sw[data-c]').forEach(x=>x.classList.toggle('sel',x.dataset.c===state.newCat.color));
+  renderCatPreview();
   checkDupe();
 }
-$('#cName').oninput=checkDupe;
+$('#cName').oninput=()=>{checkDupe();renderCatPreview();};
 function checkDupe(){
   const dup=state.categories.find(c=>c.id!==state.editingCatId && c.color.toLowerCase()===state.newCat.color.toLowerCase());
   const el=$('#dupeMsg');
@@ -683,7 +800,7 @@ $('#cSave').onclick=()=>{
   const name=$('#cName').value.trim()||'새 카테고리';
   if(state.editingCatId){
     Object.assign(state.categories.find(c=>c.id===state.editingCatId),{name,color:state.newCat.color});
-    toast('카테고리를 수정했어요');
+    toast('색상이 적용됐어요');
   }else{
     const id='c'+Math.random().toString(36).slice(2,7);
     state.categories.push({id,name,color:state.newCat.color});
@@ -806,7 +923,9 @@ $('#shareBtn').onclick=openShare;   // the sheet body + its controls are wired i
 function openScrim(s){$(s).classList.add('on');}
 function closeScrim(s){$(s).classList.remove('on');}
 $$('.scrim').forEach(sc=>sc.onclick=e=>{if(e.target===sc)sc.classList.remove('on');});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){$$('.scrim.on').forEach(s=>s.classList.remove('on'));closeMenu();}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){
+  const cs=$('#confirmScrim'); if(cs&&cs.classList.contains('on')) resolveConfirm(false);  // don't leave a pending confirm hanging
+  $$('.scrim.on').forEach(s=>s.classList.remove('on'));closeMenu();}});
 
 /* ---------- toast ---------- */
 let tT;
@@ -916,8 +1035,8 @@ async function revokeLink(token){
 function buildShareSheet(){
   const sheet=document.querySelector('#shScrim .sheet'); if(!sheet) return;
   sheet.innerHTML=`
-    <h2>공개 캘린더 공유</h2>
-    <p class="sub">공개된 일정만 링크에 담겨요. 프라이빗으로 내린 건 살아있는 모든 링크에서 함께 숨겨집니다.</p>
+    <h2>내 캘린더 공유하기</h2>
+    <p class="sub">내 공개 일정만 친구에게 보여요. 프라이빗 일정은 어떤 링크에서도 보이지 않아요.</p>
     <div id="warnBox"></div>
     <div class="zone-h pub"><svg class="svg" viewBox="0 0 24 24" style="width:15px;height:15px"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg> 공개됨 <span class="cnt" id="pubCnt"></span></div>
     <div id="pubZone"></div>
@@ -938,7 +1057,7 @@ function buildShareSheet(){
       <div class="switch on" id="cmtSwitch" role="switch" aria-checked="true"></div>
     </div>
     <button class="btn solid" id="createLinkBtn" style="width:100%;height:46px;justify-content:center;margin-top:14px">
-      <svg class="svg" viewBox="0 0 24 24" style="width:16px;height:16px"><path d="M12 5v14M5 12h14"/></svg> 새 공유 링크 만들기
+      <svg class="svg" viewBox="0 0 24 24" style="width:16px;height:16px"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg> 내 캘린더 공유하기
     </button>
     <div id="newLinkWrap"></div>
     <div class="links-sec">
@@ -1093,8 +1212,73 @@ async function fillLinkCard(l,seenAt){
    this list is read-only re-access. No accounts, so holding the token = access;
    we store the token only and re-fetch GET /api/share/[token] each open so
    expiry/revocation is always reflected (never cache the snapshot locally). */
-state.savedLinks=[];   // [{token, ownerName, savedAt, lastOpenedAt}], newest last
+state.savedLinks=[];   // [{token, ownerName, savedAt, lastOpenedAt, overlay}], newest last
 function saveSavedLinks(){ idbSet('savedLinks', state.savedLinks); }
+
+/* ---------- 겹쳐보기: overlay friends' public calendars onto mine ----------
+   A "friend" is a saved link someone shared with me. Turning overlay on fetches
+   that friend's LATEST public snapshot (never copied to disk) and merges it into
+   my month + week views, tinted by a per-friend source color. Read-only; private
+   events never appear (the snapshot only ever contains public ones). */
+state.overlayCache={};                 // token -> {ok, events, cats, name, color, token}
+const FRIEND_PALETTE=['#3B82F6','#7C6BE8','#EC4899','#14B8A6','#F59E0B','#EF6B7D','#0EA271','#22C55E'];
+function friendColorFor(token){
+  const i=state.savedLinks.findIndex(l=>l.token===token);
+  return FRIEND_PALETTE[(i<0?0:i)%FRIEND_PALETTE.length];
+}
+function activeFriends(){ return state.savedLinks.filter(l=>l.overlay); }
+function overlayOn(){ return activeFriends().length>0; }
+async function fetchFriendSnapshot(l){
+  const base={ok:false, token:l.token, name:l.ownerName||'친구', color:friendColorFor(l.token)};
+  try{
+    const res=await fetch('/api/share/'+encodeURIComponent(l.token));
+    if(!res.ok) return base;
+    const d=await res.json();
+    const cats={}; (d.categories||[]).forEach(c=>cats[c.id]=c);
+    return {...base, ok:true, events:(d.events||[]), cats};
+  }catch(e){ return base; }
+}
+let overlayReqSeq=0;
+/* refresh selected friends' snapshots, then repaint. Paints once up-front too so a
+   toggle feels instant even before the network returns. */
+async function refreshOverlays(){
+  const friends=activeFriends();
+  Object.keys(state.overlayCache).forEach(t=>{ if(!friends.some(f=>f.token===t)) delete state.overlayCache[t]; });
+  renderMonth(); renderTimeline(); renderLegend();
+  const seq=++overlayReqSeq;
+  const snaps=await Promise.all(friends.map(fetchFriendSnapshot));
+  if(seq!==overlayReqSeq) return;                 // a newer refresh superseded this one
+  snaps.forEach(s=>{ state.overlayCache[s.token]=s; });
+  renderMonth(); renderTimeline(); renderLegend();
+}
+function overlayEventsForDate(di){
+  const out=[];
+  activeFriends().forEach(l=>{
+    const c=state.overlayCache[l.token]; if(!c||!c.ok) return;
+    c.events.forEach(e=>{ if(e.date===di) out.push({e, friend:c}); });
+  });
+  return out;
+}
+/* read-only detail for a friend's event (reuses the mini-card, hides 수정/삭제) */
+function openFriendDetail(token,eid){
+  const c=state.overlayCache[token]; if(!c||!c.ok) return;
+  const e=c.events.find(x=>x.id===eid); if(!e) return;
+  ensureDetailModal();
+  const mn=document.getElementById('dtMenu'); if(mn) mn.classList.remove('on');
+  const more=document.getElementById('dtMore'); if(more) more.style.display='none';
+  state.detailId=null;
+  $('#dtDot').style.background=c.color;
+  $('#dtTitle').textContent=e.title||'제목 없음';
+  $('#dtWhen').textContent=fmtDetailWhen(e);
+  const fc=e.catId?c.cats[e.catId]:null;
+  const fcol=(fc&&fc.color)||c.color;
+  $('#dtCat').innerHTML=(fc&&fc.name)
+    ? `<span class="dt-cat-tag" style="background:${tint(fcol,isDark())};color:${inkOn(fcol,isDark())}">${esc(fc.name)}</span>` : '';
+  const memo=$('#dtMemo');
+  if(e.memo){ memo.textContent=e.memo; memo.style.display='block'; } else memo.style.display='none';
+  $('#dtVis').innerHTML=`<span class="dt-friend" style="color:${c.color}">●</span> ${esc(c.name)}님의 공개 일정`;
+  openScrim('#dtScrim');
+}
 function fmtSavedDate(ms){
   const d=new Date(ms); if(isNaN(d.getTime())) return '';
   return `${d.getFullYear()}.${d.getMonth()+1}.${d.getDate()}`;
@@ -1105,8 +1289,8 @@ function buildRecvSheet(){
   scrim.className='scrim'; scrim.id='recvScrim';
   scrim.innerHTML=`
     <div class="sheet" role="dialog" aria-modal="true" style="max-width:460px">
-      <h2>받은 캘린더</h2>
-      <p class="sub">남이 준 공유 링크를 저장해 두고 여기서 바로 열어요. 링크를 가진 사람은 누구나 열 수 있어요.</p>
+      <h2>친구 캘린더</h2>
+      <p class="sub">친구가 준 공유 링크를 이름으로 모아둬요. <b>겹쳐보기</b>를 켜면 그 친구의 공개 일정이 내 달력 위에 함께 보여요. 프라이빗은 보이지 않아요.</p>
       <div id="recvList"></div>
       <div class="sheet-actions"><button class="btn solid" id="recvDone" style="flex:1">완료</button></div>
     </div>`;
@@ -1117,13 +1301,20 @@ function buildRecvSheet(){
 function openRecv(){ buildRecvSheet(); openScrim('#recvScrim'); renderRecv(); }
 function recvOwnerName(l){ return l.ownerName || '공유 캘린더'; }
 function recvCardShell(l){
+  const on=!!l.overlay, col=friendColorFor(l.token);
   return `<div class="rcard" data-token="${l.token}">
-    <div class="rcard-main" data-open>
-      <div class="rcard-name">${esc(recvOwnerName(l))}</div>
-      <div class="rcard-meta"><span class="rcard-badge" data-status>확인 중…</span>
-        <span class="lmeta-sep">·</span>저장 ${fmtSavedDate(l.savedAt)}</div>
+    <div class="rcard-top">
+      <div class="rcard-main" data-open>
+        <div class="rcard-name"><span class="fdot" style="background:${col}"></span>${esc(recvOwnerName(l))}</div>
+        <div class="rcard-meta"><span class="rcard-badge" data-status>확인 중…</span>
+          <span class="lmeta-sep">·</span>저장 ${fmtSavedDate(l.savedAt)}</div>
+      </div>
+      <button class="rcard-del" data-del aria-label="목록에서 지우기"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg></button>
     </div>
-    <button class="rcard-del" data-del aria-label="목록에서 지우기"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M6 6l1 14a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-14"/></svg></button>
+    <div class="rcard-overlay">
+      <span class="rcard-ov-lbl"><span class="fdot" style="background:${col}"></span> 겹쳐보기</span>
+      <div class="switch${on?' on':''}" data-overlay role="switch" aria-checked="${on}"></div>
+    </div>
   </div>`;
 }
 async function renderRecv(){
@@ -1148,6 +1339,14 @@ async function renderRecv(){
       if(card.classList.contains('dead')) return;                 // gone → not openable
       l.lastOpenedAt=Date.now(); saveSavedLinks();
       window.open('/s/'+encodeURIComponent(token),'_blank','noopener');
+    };
+    const sw=card.querySelector('[data-overlay]');
+    if(sw) sw.onclick=()=>{
+      l.overlay=!l.overlay;
+      sw.classList.toggle('on',l.overlay); sw.setAttribute('aria-checked',l.overlay);
+      saveSavedLinks();
+      refreshOverlays();                                          // fetch + merge (or drop) immediately
+      toast(l.overlay?`${recvOwnerName(l)}님 일정을 겹쳐봐요`:`${recvOwnerName(l)}님 일정을 숨겼어요`);
     };
   });
   // fetch live status per link (expiry/revocation reflected each open)
@@ -1192,9 +1391,15 @@ async function loadState(){
   if(typeof seen==='number') state.cmtSeenAt=seen;
   if(Array.isArray(saved)) state.savedLinks=saved;
 }
+function hideBootLoading(){
+  const bl=document.getElementById('bootLoading'); if(!bl) return;
+  bl.classList.add('off'); setTimeout(()=>{ if(bl.parentNode) bl.remove(); },320);
+}
 async function initApp(){
   try{ await loadState(); }catch(e){ console.warn('[shareday] load failed',e); }
-  ensureMenu();                                   // header menu (다크모드·카테고리·공유 링크·받은 캘린더)
-  renderDow(); applyTheme(); renderTimeline();
+  ensureMenu();                                   // header menu (다크모드·카테고리·공유 링크·친구 캘린더)
+  renderDow(); applyTheme(); renderTimeline();    // first full render is done here
+  hideBootLoading();                              // reveal only once the calendar is painted
+  if(overlayOn()) refreshOverlays();              // restore any friends' overlays from last time
 }
 initApp();

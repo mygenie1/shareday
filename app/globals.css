@@ -227,8 +227,10 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .sheet .sub{font-size:12.5px;color:var(--ink-faint);margin-bottom:20px;line-height:1.5}
 .field{margin-bottom:16px}
 .field label{display:block;font-size:12.5px;color:var(--ink-soft);font-weight:600;margin-bottom:8px}
-.inp{width:100%;height:42px;padding:0 13px;border:1px solid var(--line);border-radius:11px;background:var(--bg);
-  color:var(--ink);font-family:inherit;font-size:14px;transition:border-color .15s,box-shadow .15s}
+/* iOS zooms when a focused field is <16px — keep every real input ≥16px */
+.inp{width:100%;height:44px;padding:0 13px;border:1px solid var(--line);border-radius:11px;background:var(--bg);
+  color:var(--ink);font-family:inherit;font-size:16px;transition:border-color .15s,box-shadow .15s}
+input,textarea,select{font-size:16px}
 .inp:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
 .row2{display:flex;gap:10px}.row2>*{flex:1}
 .catpick{display:flex;flex-wrap:wrap;gap:7px}
@@ -249,6 +251,14 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .sw.hex{display:flex;align-items:center;justify-content:center;position:relative;border:1px dashed var(--line);color:var(--ink-faint);font-size:13px}
 .dupe{font-size:12px;color:var(--danger);margin-top:9px;display:none;line-height:1.45}
 .dupe.on{display:block}
+/* live preview of the category being built — makes color/name choices obvious */
+.cat-preview{display:flex;align-items:center;gap:10px;margin-top:14px;padding:12px 13px;
+  border:1px solid var(--line-soft);border-radius:12px;background:var(--bg)}
+.cat-preview-lbl{font-size:11.5px;font-weight:700;color:var(--ink-faint);letter-spacing:.02em}
+.cat-preview-chip{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;
+  padding:6px 12px;border-radius:20px}
+.cat-preview-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+[data-theme="dark"] .cat-preview-chip{background:var(--line-soft) !important;color:var(--ink-soft) !important}
 
 /* category manager list */
 .catrow{display:flex;align-items:center;gap:12px;padding:11px 4px;border-bottom:1px solid var(--line-soft)}
@@ -308,6 +318,16 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .inbox-cmt{font-size:12.5px;color:var(--ink-soft);line-height:1.5;white-space:pre-wrap}
 .inbox-cmt b{color:var(--ink);font-weight:700;margin-right:5px}
 
+/* boot loading overlay — shown from SSR markup, hidden after first render so the
+   calendar never flashes empty while IndexedDB loads */
+.boot-loading{position:fixed;inset:0;z-index:90;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:14px;background:var(--bg);color:var(--ink-faint);font-size:13.5px;font-weight:600;
+  transition:opacity .28s ease}
+.boot-loading.off{opacity:0;pointer-events:none}
+.boot-spin{width:30px;height:30px;border-radius:50%;border:3px solid var(--line);border-top-color:var(--accent);
+  animation:boot-spin .7s linear infinite}
+@keyframes boot-spin{to{transform:rotate(360deg)}}
+
 /* toast */
 .toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--bg);
   font-size:13px;font-weight:600;padding:11px 20px;border-radius:12px;box-shadow:var(--shadow);opacity:0;pointer-events:none;
@@ -339,8 +359,9 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
   .cell{min-height:82px;border-radius:9px;padding:5px 3px}
   .cell .dn{font-size:12px;width:21px;height:21px}
   .chips{gap:2px}
+  /* two lines + ellipsis; category color sits in front as a left color-bar
+     (currentColor = the category-colored text) — same syntax in light & dark */
   .chip{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;align-items:unset;padding:2px 4px;gap:0;border-radius:4px;font-size:9.5px;line-height:1.18;border-left:3px solid currentColor}
-  [data-theme="dark"] .chip{border-left:none}
   .chip>span:nth-child(2){display:inline;overflow:hidden}
   .chip .lk{display:none}
   .more{font-size:9px;font-weight:700;padding:1px 2px 0 0;text-align:right}
@@ -375,7 +396,7 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .lcard.dead{opacity:.55}
 .lcard-name-row{display:flex;align-items:center;gap:6px;margin-bottom:6px}
 .lcard-name{font-size:14px;font-weight:700;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.lcard-name-input{height:32px;font-size:13.5px;font-weight:600;max-width:220px}
+.lcard-name-input{height:34px;font-size:16px;font-weight:600;max-width:220px}
 .lcard-rename{width:26px;height:26px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;
   color:var(--ink-faint);flex-shrink:0;transition:background .15s,color .15s}
 .lcard-rename:hover{background:var(--line-soft);color:var(--ink-soft)}
@@ -412,9 +433,21 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 #confirmScrim{z-index:70}
 
 /* detail mini-card (read-only; the only path to editing) */
-.dt-head{display:flex;align-items:center;gap:9px;margin-bottom:12px}
+.dt-head{display:flex;align-items:center;gap:9px;margin-bottom:12px;position:relative}
 .dt-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}
-.dt-head h2{margin-bottom:0}
+.dt-head h2{margin-bottom:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+/* actions live behind ⋯ (수정/삭제); tapping outside the card closes it */
+.dt-more{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+  color:var(--ink-soft);flex-shrink:0;transition:background .15s}
+.dt-more:hover{background:var(--line-soft)}
+.dt-more svg{width:20px;height:20px}
+.dt-menu{position:absolute;top:40px;right:0;z-index:5;min-width:150px;background:var(--panel);
+  border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:6px;display:none}
+.dt-menu.on{display:block}
+.dt-menu button{display:block;width:100%;text-align:left;padding:11px 12px;border-radius:9px;
+  font-size:14px;font-weight:600;color:var(--ink);background:none;transition:background .14s}
+.dt-menu button:hover{background:var(--line-soft)}
+.dt-menu button.danger{color:var(--danger)}
 .dt-when{font-size:13.5px;font-weight:600;color:var(--ink-soft);margin-bottom:12px}
 .dt-cat{margin-bottom:12px}
 .dt-cat:empty{display:none}
@@ -436,6 +469,29 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .rcard-del{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:var(--ink-faint);flex-shrink:0;transition:background .15s,color .15s}
 .rcard-del:hover{background:var(--danger-soft);color:var(--danger)}
 .rcard-del svg{width:16px;height:16px;stroke:currentColor;stroke-width:1.7;fill:none;stroke-linecap:round;stroke-linejoin:round}
+/* friend card now stacks: top row (name/status/delete) + 겹쳐보기 toggle row */
+.rcard{display:block;padding:0}
+.rcard-top{display:flex;align-items:center;gap:10px;padding:12px 13px}
+.rcard-name{display:flex;align-items:center;gap:6px}
+.rcard-overlay{display:flex;align-items:center;justify-content:space-between;padding:9px 13px;
+  border-top:1px solid var(--line-soft);background:var(--bg)}
+.rcard-ov-lbl{display:inline-flex;align-items:center;gap:7px;font-size:13px;font-weight:600;color:var(--ink-soft)}
+
+/* ── 겹쳐보기 overlay: friend events tinted by a per-friend source color ── */
+.fdot{width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block}
+.tg-chip.friend .fdot{margin-right:3px;vertical-align:middle}
+.tg-block.friend .tg-bn .fdot{margin-right:3px;vertical-align:middle}
+.chip.friend{gap:3px}
+.legend-friends{display:flex;flex-wrap:wrap;align-items:center;gap:6px;width:100%;margin-top:8px;
+  padding-top:9px;border-top:1px dashed var(--line)}
+.legend-off{font-size:11.5px;font-weight:700;color:var(--ink-soft);background:var(--line-soft);
+  border-radius:20px;padding:4px 11px;cursor:pointer;transition:color .15s,background .15s}
+.legend-off:hover{color:var(--ink);background:var(--line)}
+.friend-row{display:inline-flex;align-items:center;gap:6px;background:var(--line-soft);border-radius:20px;padding:4px 10px}
+.friend-name{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700}
+.fcat{font-size:11px;font-weight:600;color:var(--ink-soft)}
+.fcat.pending{color:var(--ink-faint)}
+.dt-friend{font-size:9px;vertical-align:middle}
 
 /* header dropdown menu (다크모드·카테고리·내 공유 링크·받은 캘린더) */
 #menuBtn svg{width:18px;height:18px}
@@ -473,35 +529,13 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 @media(max-width:480px){.hol-name{display:none}}
 
 /* ============================================================
-   DARK (OLED) redesign — color moves to a LEFT BAR on a neutral
-   fill; grid lines fade; dates get crisp contrast.
-   Scoped to [data-theme="dark"] ONLY — light mode is untouched.
-   --cat (category color) is set inline per chip/pill/tag.
+   DARK: category color uses the SAME "color-at-the-title" syntax as
+   light — tinted background + colored text (+ the mobile left color-
+   bar). No dark-only neutral-fill / outline-ring treatment anymore.
+   tint()/inkOn() (calendar.js) already adapt to the dark background
+   for contrast; only the pure-black background tone is dark-specific.
    ============================================================ */
-/* month chip: neutral fill + full category-colored outline ring
-   (inset box-shadow ⇒ crisp colored 윤곽선 with zero layout shift) */
-[data-theme="dark"] .chip{
-  background:#1c1c20 !important; color:var(--ink) !important;
-  box-shadow:inset 0 0 0 1.5px var(--cat,var(--ink-faint));
-}
 [data-theme="dark"] .chip .lk{opacity:.5}
-/* week time block: neutral fill + category-colored outline ring (drop inline left bar) */
-[data-theme="dark"] .tg-block{
-  background:#1c1c20 !important; color:var(--ink) !important;
-  border-left:none !important;
-  box-shadow:inset 0 0 0 1.5px var(--cat,var(--ink-faint)),0 1px 3px -1px rgba(0,0,0,.5) !important;
-}
-/* all-day pill: neutral fill + category-colored outline ring */
-[data-theme="dark"] .tg-chip{
-  background:#1c1c20 !important; color:var(--ink) !important;
-  box-shadow:inset 0 0 0 1.5px var(--cat,var(--ink-faint));
-}
-/* legend: neutral pill + small color dot (color+이름 both kept) */
-[data-theme="dark"] .tag{ background:var(--line-soft) !important; color:var(--ink-soft) !important; }
-[data-theme="dark"] .tag::before{
-  content:""; width:7px; height:7px; border-radius:50%;
-  background:var(--cat,var(--ink-faint)); flex-shrink:0;
-}
 /* date contrast: ordinary in-month dates go bright white; today(초록 원)·일(빨강)·
    토(파랑)·공휴일(빨강)·지난달(흐림)은 기존 규칙이 그대로 처리 */
 [data-theme="dark"] .cell:not(.out):not(.today):not(.sun):not(.sat):not(.holiday) .dn{
