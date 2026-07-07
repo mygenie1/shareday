@@ -12,6 +12,29 @@
 # NEVER commit these values.
 
 workflows:
+  # ── Fastest path: no signing, no Play. Builds a debug APK you download from the
+  #    build's Artifacts and sideload to your phone. Also compile-verifies the widget
+  #    integration (a green build = the native code compiles). Start here.
+  android-debug:
+    name: ShareDay Android — debug APK (sideload)
+    max_build_duration: 45
+    instance_type: linux_x2
+    environment:
+      node: 20
+      java: 17
+    scripts:
+      - name: Install JS deps
+        script: npm ci
+      - name: Capacitor sync (android/ is committed)
+        script: npx cap sync android
+      - name: Build debug APK
+        script: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
+    artifacts:
+      - android/app/build/outputs/apk/debug/*.apk
+
   android-internal:
     name: ShareDay Android — Play internal
     max_build_duration: 60

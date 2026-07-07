@@ -88,8 +88,16 @@ npx cap sync
 ---
 
 ## STEP 4. Codemagic 빌드/배포
-1. Codemagic에 저장소 연결. `codemagic.yaml` 자동 인식.
-2. 시크릿(그룹) 설정 — **저장소에 커밋 금지**:
+
+### 4-0. 안드로이드 빠른 확인 (서명·Play 불필요, 먼저 이걸로)
+1. Codemagic → 저장소 연결(`mygenie1/shareday`). `codemagic.yaml` 자동 인식.
+2. **`android-debug`** 워크플로 실행 → 빌드 성공 = 위젯 통합 코드가 **컴파일됨**.
+3. 빌드 결과 **Artifacts**에서 `app-debug.apk` 다운로드 → 폰에 설치(출처 불명 앱 허용).
+4. 앱 열기(웹앱 그대로 뜸) → 메뉴 **홈 위젯** → 공개 캘린더 선택·적용 → 홈 화면에 "셰어데이" 위젯 추가 → 오늘 공개 일정 확인.
+   - 빌드가 **빨간색**이면 로그의 컴파일 에러를 알려주면 그 파일을 고친다.
+
+### 4-1. 서명 빌드 / 스토어 배포 (확인 끝난 뒤)
+1. 시크릿(그룹) 설정 — **저장소에 커밋 금지**:
    - `shareday_android`: `CM_KEYSTORE`(base64 .jks), `CM_KEYSTORE_PASSWORD`, `CM_KEY_ALIAS`, `CM_KEY_PASSWORD`, `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS`.
    - `shareday_ios`: App Store Connect API 키 통합(`shareday_asc_key`), 배포/위젯 프로비저닝.
 3. `android-internal` → Play **내부 테스트**, `ios-testflight` → **TestFlight** 로 먼저 배포해 실기기에서 위젯 확인.
