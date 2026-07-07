@@ -101,7 +101,11 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .cell.sat .dn{color:var(--sat)}
 .chips{display:flex;flex-direction:column;gap:3px;overflow:hidden}
 .chip{display:flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2.5px 6px;border-radius:6px;min-width:0;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.4;touch-action:none}
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.4;touch-action:none;
+  /* iOS Safari leaves an anti-aliasing speck where the tinted background meets the
+     rounded corner. Clip the background inside the border and promote the chip to its
+     own compositing layer so Safari repaints the corners cleanly. The tint STAYS. */
+  background-clip:padding-box;-webkit-background-clip:padding-box;transform:translateZ(0)}
 .chip>span:nth-child(2){overflow:hidden;text-overflow:ellipsis;min-width:0}
 .chip .lk{margin-left:auto;opacity:.6}
 .more{font-size:10.5px;font-weight:600;color:var(--ink-faint);padding-left:6px}
@@ -230,7 +234,9 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
    the block is being moved/resized, as live landing feedback. */
 .tg-bt{display:none;font-size:9px;font-weight:700;opacity:.85;font-variant-numeric:tabular-nums;line-height:1.2}
 .tg-block.dragging .tg-bt{display:block}
-.tg-bn{display:block;font-size:10.5px;font-weight:600;line-height:1.3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* title wraps up to 3 lines (ellipsis past that); a short block clips via the
+   block's own overflow:hidden, a tall block shows all 3 lines. */
+.tg-bn{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;font-size:10.5px;font-weight:600;line-height:1.3;overflow:hidden;word-break:break-word}
 @media(max-width:640px){
   /* fixed 68px columns → ~5 days visible with the next day peeking; the day area
      scrolls horizontally and the header/gutter panes are JS-translated to match. */
@@ -392,12 +398,10 @@ input,textarea,select{font-size:16px}
   .cell{min-height:82px;border-radius:9px;padding:5px 3px}
   .cell .dn{font-size:12px;width:21px;height:21px}
   .chips{gap:2px}
-  /* two lines + ellipsis; category color lives ONLY in the left color-bar
-     (currentColor = the category-colored text). The chip body stays a clean
-     neutral (transparent) — no tint bleeding to the right/corner. The inline
-     background:tint() from calendar.js is intentionally overridden here.
-     Same syntax in light & dark. */
-  .chip{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;align-items:unset;padding:2px 4px;gap:0;border-radius:4px;font-size:9.5px;line-height:1.18;border-left:3px solid currentColor;background:transparent!important}
+  /* two lines + ellipsis; category color sits in front as a left color-bar
+     (currentColor = the category-colored text) over the tinted body — same syntax
+     in light & dark. The tint is what distinguishes categories, so it stays. */
+  .chip{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;align-items:unset;padding:2px 4px;gap:0;border-radius:4px;font-size:9.5px;line-height:1.18;border-left:3px solid currentColor}
   .chip>span:nth-child(2){display:inline;overflow:hidden}
   .chip .lk{display:none}
   .more{font-size:9px;font-weight:700;padding:1px 2px 0 0;text-align:right}

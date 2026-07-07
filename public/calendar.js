@@ -793,9 +793,13 @@ function attachBlockInteract(bl,PXH,minH){
       // live time label
       const lbl=bl.querySelector('.tg-bt'); if(lbl) lbl.textContent=e.time+(e.end?'–'+e.end:'');
     }
+    let finished=false;
     function up(uv){
+      if(finished) return; finished=true;                          // idempotent: pointerup OR pointercancel, never both
       clearTimeout(lpTimer);
       document.removeEventListener('pointermove',move);
+      document.removeEventListener('pointerup',up);
+      document.removeEventListener('pointercancel',up);
       edgeDir=0; if(edgeRAF) cancelAnimationFrame(edgeRAF);
       bl.classList.remove('pressing','dragging','armed');
       if(!armed){ if(!cancelled) openEventDetail(e.id); return; }   // quick tap → detail card
@@ -806,8 +810,12 @@ function attachBlockInteract(bl,PXH,minH){
       toastUndo(mode==='move'?'일정을 옮겼어요':'시간을 바꿨어요', ()=>{ Object.assign(e,prev0); reRender(true); });
     }
     document.addEventListener('pointermove',move);
-    document.addEventListener('pointerup',up,{once:true});
-    ev.preventDefault(); ev.stopPropagation();
+    document.addEventListener('pointerup',up);
+    // iOS Safari fires pointercancel (not pointerup) when pointerdown's default is
+    // prevented — that swallowed the short-tap→detail path. So we DON'T preventDefault
+    // (touch-action:none already blocks scroll) and we also catch pointercancel.
+    document.addEventListener('pointercancel',up);
+    ev.stopPropagation();
   });
 }
 $('#tlToggle').onclick=()=>{state.tlCollapsed=!state.tlCollapsed;renderTimeline();};
