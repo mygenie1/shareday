@@ -32,6 +32,9 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // viewport-fit=cover is required for env(safe-area-inset-*) to report real values
+  // on notched/dynamic-island iPhones — the bottom sheet uses it to sit flush.
+  viewportFit: "cover",
   // The mobile browser chrome bar stays neutral (matches the app background) instead
   // of brand green, so category colors lead. The deep-green logo is unchanged.
   // The exact per-theme color is set by the head script below (honors a saved theme).
