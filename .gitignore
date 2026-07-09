@@ -30,6 +30,11 @@ next-env.d.ts
 # original Claude Design export (kept out of the app build)
 셰어데이 캘린더.html
 
+# the native app shell — a generated copy of the markup/css/js (npm run build:shell).
+# kept out of git so it can never drift from the sources it is copied from; CI and
+# `npm run cap:sync` regenerate it before every `cap sync`.
+/capacitor-www/
+
 # capacitor native build artifacts (the ios/ and android/ project files ARE committed
 # after `npx cap add`; only generated build output + local machine files are ignored)
 /ios/App/Pods/

@@ -25,6 +25,8 @@ workflows:
     scripts:
       - name: Install JS deps
         script: npm ci
+      - name: Build the offline app shell (capacitor-www/)
+        script: npm run build:shell
       - name: Capacitor sync (android/ is committed)
         script: npx cap sync android
       - name: Build debug APK
@@ -47,6 +49,8 @@ workflows:
     scripts:
       - name: Install JS deps
         script: npm ci
+      - name: Build the offline app shell (capacitor-www/)
+        script: npm run build:shell
       - name: Capacitor sync (platforms are committed)
         script: npx cap sync android
       - name: Decode keystore
@@ -88,6 +92,8 @@ workflows:
     scripts:
       - name: Install JS deps
         script: npm ci
+      - name: Build the offline app shell (capacitor-www/)
+        script: npm run build:shell
       - name: Capacitor sync (platforms are committed)
         script: npx cap sync ios
       - name: Pods

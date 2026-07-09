@@ -34,6 +34,25 @@ const state = {
 
 const PALETTE = ['#10B981','#34D399','#3B82F6','#7C6BE8','#EF6B7D','#FF8A5B','#F59E0B','#EAB308','#14B8A6','#EC4899','#64748B','#0EA271'];
 
+/* ---------- backend origin + connectivity ----------
+   On the web the app is served from the same origin as its API, so relative paths
+   work. Inside the Capacitor shell the UI is bundled with the app (so it opens with
+   no network) and its origin is capacitor://localhost — API calls must be absolute,
+   and the routes allow that origin explicitly (see middleware.ts). */
+const API_ORIGIN='https://shareday-seven.vercel.app';
+const isNative=()=>!!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform());
+const api=p=>(isNative()?API_ORIGIN:'')+p;
+const isOnline=()=>navigator.onLine!==false;
+const OFFLINE_MSG='오프라인이에요. 연결되면 다시 시도해 주세요';
+/* "3시간 전" — how stale a cached friend snapshot is */
+function relTime(ts){
+  const m=Math.max(0,Math.round((Date.now()-ts)/60000));
+  if(m<1) return '방금 전';
+  if(m<60) return m+'분 전';
+  const h=Math.round(m/60); if(h<24) return h+'시간 전';
+  return Math.round(h/24)+'일 전';
+}
+
 /* ---------- helpers ---------- */
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const cat=id=>state.categories.find(c=>c.id===id)||state.categories[0];
@@ -275,9 +294,11 @@ function renderFriendLegend(){
     const c=state.overlayCache[l.token];
     const col=(c&&c.color)||friendColorFor(l.token);
     const name=(c&&c.name)||l.ownerName||'친구';
-    const catTags=(c&&c.ok)
+    let catTags=(c&&c.ok)
       ? Object.values(c.cats).filter(k=>k&&k.name).map(k=>`<span class="fcat">${esc(k.name)}</span>`).join('')
       : '<span class="fcat pending">불러오는 중…</span>';
+    // cached snapshot (offline / server unreachable) — say how old it is so it isn't read as current
+    if(c&&c.stale) catTags+=`<span class="fcat stale">마지막 업데이트 ${esc(relTime(c.fetchedAt))}</span>`;
     return `<span class="friend-row"><span class="friend-name" style="color:${col}"><span class="fdot" style="background:${col}"></span>${esc(name)}</span>${catTags}</span>`;
   }).join('');
   box.innerHTML=`<span class="legend-off" id="legendOff">겹쳐보기 끄기</span>${rows}`;
@@ -993,6 +1014,37 @@ $('#shareBtn').onclick=openShare;   // the sheet body + its controls are wired i
 function openScrim(s){$(s).classList.add('on'); syncBackOpen();}
 function closeScrim(s){$(s).classList.remove('on');}
 
+/* ---------- freeze the page behind an open sheet ----------
+   The scrim is already position:fixed, but the page under it kept scrolling, so the
+   blurred backdrop drifted while a card was open. iOS Safari ignores overflow:hidden
+   on the scroller, so we pin the body with position:fixed at -scrollY and restore the
+   exact offset on close. Layers stack (confirm over sheet) → lock on "any scrim open". */
+let lockedY=0, scrollLocked=false;
+function setScrollLock(on){
+  if(on===scrollLocked) return;
+  const b=document.body;
+  if(on){
+    lockedY=window.scrollY||document.documentElement.scrollTop||0;
+    const gutter=window.innerWidth-document.documentElement.clientWidth;   // desktop scrollbar width
+    b.style.top=(-lockedY)+'px';
+    if(gutter>0) b.style.paddingRight=gutter+'px';                         // no content shift on desktop
+    b.classList.add('scroll-locked');
+  }else{
+    b.classList.remove('scroll-locked');
+    b.style.top=''; b.style.paddingRight='';
+    window.scrollTo(0,lockedY);
+  }
+  scrollLocked=on;
+}
+let lockRaf=0;
+function syncScrollLock(){
+  if(lockRaf) return;
+  lockRaf=requestAnimationFrame(()=>{ lockRaf=0; setScrollLock(!!document.querySelector('.scrim.on')); });
+}
+/* a dozen paths toggle .on (and some scrims are injected on first use), so watch the
+   DOM rather than patch every call site — back button and Escape are covered too. */
+new MutationObserver(syncScrollLock).observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['class']});
+
 /* ---------- Android/browser back: close the top open layer first; exit only at home ----------
    While any overlay (sheet/modal/detail/picker/menu) is open we keep ONE history
    sentinel. A back press pops it → popstate closes the topmost layer (re-arming a
@@ -1106,9 +1158,10 @@ function linkStatus(l){
 async function createShareLink(){
   const name=$('#shName').value.trim()||autoLinkName();
   const btn=$('#createLinkBtn'); if(btn.disabled) return;
+  if(!isOnline()){ toast(OFFLINE_MSG); return; }        // creating a link needs the server
   btn.disabled=true; const prev=btn.innerHTML; btn.textContent='만드는 중…';
   try{
-    const res=await fetch('/api/share',{method:'POST',headers:{'Content-Type':'application/json'},
+    const res=await fetch(api('/api/share'),{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({events:publicEvents(),categories:state.categories,allowComments:createCmt,expiresDays:createExp})});
     const data=await res.json();
     if(res.ok){
@@ -1125,14 +1178,17 @@ async function createShareLink(){
 /* push the current public snapshot to one existing link (PUT keeps its token). */
 async function pushLink(l){
   try{
-    const res=await fetch('/api/share/'+encodeURIComponent(l.token),
+    const res=await fetch(api('/api/share/'+encodeURIComponent(l.token)),
       {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(linkPayload(l))});
     if(res.ok){ const d=await res.json(); l.url=d.url; l.count=d.count; }
   }catch(e){}
 }
-/* after any change: push to every live link so private events vanish everywhere. */
+/* after any change: push to every live link so private events vanish everywhere.
+   Offline the push is skipped; the 'online' listener re-runs it with the latest
+   snapshot, so a link is never left showing a private event. */
 let shareChain=Promise.resolve();
 function syncAllLive(){
+  if(!isOnline()) return Promise.resolve();
   const live=state.shareLinks.filter(isLinkLive);
   if(!live.length) return Promise.resolve();
   shareChain=shareChain.then(async()=>{ await Promise.all(live.map(pushLink)); saveShareLinks(); });
@@ -1144,10 +1200,11 @@ function syncAllLive(){
 async function deleteLink(token){
   const l=state.shareLinks.find(x=>x.token===token); if(!l) return;
   if(isLinkLive(l)){
+    if(!isOnline()){ toast(OFFLINE_MSG); return; }   // revoking must reach the server, or we'd leave a ghost
     const ok=await showConfirm({title:'링크 삭제', msg:'이 링크를 삭제하면 받은 사람도 더는 못 봐요. 삭제할까요?', okLabel:'삭제'});
     if(!ok) return;
     let done=false;
-    try{ const res=await fetch('/api/share/'+encodeURIComponent(token),{method:'DELETE'}); done=res.ok; }
+    try{ const res=await fetch(api('/api/share/'+encodeURIComponent(token)),{method:'DELETE'}); done=res.ok; }
     catch(e){ done=false; }
     if(!done){ toast('삭제하지 못했어요. 잠시 후 다시 시도해 주세요'); return; }   // no ghost state
   }
@@ -1307,10 +1364,15 @@ async function fillLinkCard(l,seenAt){
     if(body) body.innerHTML='<p class="lc-note">폐기·만료된 링크라 코멘트를 볼 수 없어요.</p>';
     return;
   }
+  if(!isOnline()){   // comments live only on the server
+    if(badge) badge.innerHTML=CMT_SVG+' –';
+    if(body) body.innerHTML='<p class="lc-note">오프라인이에요. 연결되면 코멘트를 불러와요.</p>';
+    return;
+  }
   try{
     const [snapRes,cmtRes]=await Promise.all([
-      fetch('/api/share/'+encodeURIComponent(l.token)),
-      fetch('/api/share/'+encodeURIComponent(l.token)+'/comments'),
+      fetch(api('/api/share/'+encodeURIComponent(l.token))),
+      fetch(api('/api/share/'+encodeURIComponent(l.token)+'/comments')),
     ]);
     let titles={};
     if(snapRes.ok){ const snap=await snapRes.json(); l.count=(snap.events||[]).length;
@@ -1335,10 +1397,18 @@ async function fillLinkCard(l,seenAt){
 /* ---------- received-links storehouse (links OTHERS shared with me) ---------- */
 /* Kept separate from state.shareLinks (links I created): different purpose —
    this list is read-only re-access. No accounts, so holding the token = access;
-   we store the token only and re-fetch GET /api/share/[token] each open so
-   expiry/revocation is always reflected (never cache the snapshot locally). */
+   we re-fetch GET /api/share/[token] whenever we're online, so expiry/revocation is
+   always reflected. The last response is cached (state.friendSnaps) purely as an
+   OFFLINE fallback — online never reads it, and a 404/410 wipes it on the spot. */
 state.savedLinks=[];   // [{token, ownerName, savedAt, lastOpenedAt, overlay}], newest last
 function saveSavedLinks(){ idbSet('savedLinks', state.savedLinks); }
+
+/* token -> {events, cats, fetchedAt}. Public snapshots only — the same data the
+   server would hand any link holder, so caching it leaks nothing. My own private
+   events are never in here (they never leave IndexedDB). */
+state.friendSnaps={};
+function saveFriendSnaps(){ idbSet('friendSnaps', state.friendSnaps); }
+function dropFriendSnap(token){ if(state.friendSnaps[token]){ delete state.friendSnaps[token]; saveFriendSnaps(); } }
 
 /* ---------- 겹쳐보기: overlay friends' public calendars onto mine ----------
    A "friend" is a saved link someone shared with me. Turning overlay on fetches
@@ -1353,15 +1423,31 @@ function friendColorFor(token){
 }
 function activeFriends(){ return state.savedLinks.filter(l=>l.overlay); }
 function overlayOn(){ return activeFriends().length>0; }
+/* Latest-first: online we always take the server's answer and refresh the cache.
+   The cache is read only when the network can't answer — and it's labelled stale so
+   an old snapshot is never mistaken for the current one. */
 async function fetchFriendSnapshot(l){
-  const base={ok:false, token:l.token, name:l.ownerName||'친구', color:friendColorFor(l.token)};
+  const token=l.token;
+  const base={ok:false, token, name:l.ownerName||'친구', color:friendColorFor(token)};
+  const stale=()=>{
+    const c=state.friendSnaps[token];
+    return c ? {...base, ok:true, events:c.events, cats:c.cats, stale:true, fetchedAt:c.fetchedAt} : base;
+  };
+  if(!isOnline()) return stale();
   try{
-    const res=await fetch('/api/share/'+encodeURIComponent(l.token));
-    if(!res.ok) return base;
+    const res=await fetch(api('/api/share/'+encodeURIComponent(token)));
+    if(res.status===404||res.status===410){    // expired/revoked → the cache is dead too
+      dropFriendSnap(token);
+      return {...base, gone:true};
+    }
+    if(!res.ok) return stale();                // 5xx / hiccup → last known is better than blank
     const d=await res.json();
     const cats={}; (d.categories||[]).forEach(c=>cats[c.id]=c);
-    return {...base, ok:true, events:(d.events||[]), cats};
-  }catch(e){ return base; }
+    const events=d.events||[];
+    state.friendSnaps[token]={events, cats, fetchedAt:Date.now()};
+    saveFriendSnaps();
+    return {...base, ok:true, events, cats};
+  }catch(e){ return stale(); }
 }
 let overlayReqSeq=0;
 /* refresh selected friends' snapshots, then repaint. Paints once up-front too so a
@@ -1373,7 +1459,14 @@ async function refreshOverlays(){
   const seq=++overlayReqSeq;
   const snaps=await Promise.all(friends.map(fetchFriendSnapshot));
   if(seq!==overlayReqSeq) return;                 // a newer refresh superseded this one
-  snaps.forEach(s=>{ state.overlayCache[s.token]=s; });
+  const gone=snaps.filter(s=>s.gone);
+  if(gone.length){                                // back online with dead links → stop overlaying them
+    gone.forEach(s=>{ const l=state.savedLinks.find(x=>x.token===s.token); if(l) l.overlay=false; });
+    saveSavedLinks();
+    toast(gone.length===1?`${gone[0].name}님의 링크가 만료·폐기됐어요`:'만료·폐기된 친구 링크를 정리했어요');
+  }
+  snaps.forEach(s=>{ if(!s.gone) state.overlayCache[s.token]=s; });
+  gone.forEach(s=>{ delete state.overlayCache[s.token]; });
   renderMonth(); renderTimeline(); renderLegend();
 }
 function overlayEventsForDate(di){
@@ -1481,13 +1574,14 @@ async function renderRecv(){
       ev.stopPropagation();
       const ok=await showConfirm({title:'목록에서 지우기', msg:`'${recvOwnerName(l)}'을(를) 받은 캘린더에서 지울까요?`, okLabel:'지우기'});
       if(!ok) return;
-      state.savedLinks=state.savedLinks.filter(x=>x.token!==token); saveSavedLinks(); renderRecv();
+      state.savedLinks=state.savedLinks.filter(x=>x.token!==token); saveSavedLinks(); dropFriendSnap(token); renderRecv();
       toast('목록에서 지웠어요');
     };
     card.querySelector('[data-open]').onclick=()=>{
       if(card.classList.contains('dead')) return;                 // gone → not openable
+      if(!isOnline()){ toast('오프라인이에요. 겹쳐보기로 마지막 일정을 볼 수 있어요'); return; }
       l.lastOpenedAt=Date.now(); saveSavedLinks();
-      window.open('/s/'+encodeURIComponent(token),'_blank','noopener');
+      window.open(api('/s/'+encodeURIComponent(token)),'_blank','noopener');
     };
     const rn=card.querySelector('[data-rename]');
     if(rn) rn.onclick=(ev)=>{ ev.stopPropagation(); startRecvRename(token,card); };
@@ -1504,14 +1598,19 @@ async function renderRecv(){
   await Promise.all(links.map(async l=>{
     const card=list.querySelector('.rcard[data-token="'+l.token+'"]'); if(!card) return;
     const badge=card.querySelector('[data-status]');
+    if(!isOnline()){   // can't confirm expiry offline — say so instead of guessing
+      const c=state.friendSnaps[l.token];
+      badge.textContent = c ? '오프라인 · '+relTime(c.fetchedAt) : '오프라인';
+      return;
+    }
     try{
-      const res=await fetch('/api/share/'+encodeURIComponent(l.token));
+      const res=await fetch(api('/api/share/'+encodeURIComponent(l.token)));
       if(res.ok){
         const d=await res.json();
         if(!d.expiresAt){ badge.textContent='무기한'; }
         else{ const days=Math.ceil((new Date(d.expiresAt).getTime()-Date.now())/86400000);
           badge.textContent = days>0 ? 'D-'+days : '만료됨'; if(days<=0){ card.classList.add('dead'); badge.classList.add('gone'); } }
-      }else{ card.classList.add('dead'); badge.textContent='만료됨'; badge.classList.add('gone'); }  // 410/404 → 만료·폐기
+      }else{ card.classList.add('dead'); badge.textContent='만료됨'; badge.classList.add('gone'); dropFriendSnap(l.token); }  // 410/404 → 만료·폐기 (캐시도 정리)
     }catch(e){ badge.textContent='확인 실패'; }
   }));
 }
@@ -1624,24 +1723,41 @@ async function saveWidgetChoice(){
   toast(tokens.length?(widgetNative()?'위젯에 적용했어요':'위젯 캘린더를 저장했어요'):'위젯에서 캘린더를 비웠어요');
 }
 
-/* ---------- holidays (server-cached) ---------- */
+/* ---------- holidays (server-cached, then cached on-device so they show offline) ---------- */
 const HOLIDAYS={};
-const holidayYears=new Set();
-function ensureHolidays(year){
+const holidayYears=new Set();        // attempted (cache read and, when online, a fetch)
+const holidayConfirmed=new Set();    // the server answered → no need to ask again
+function applyHolidays(list){
+  let added=false;
+  list.forEach(h=>{ if(h.isHoliday!==false && HOLIDAYS[h.date]!==h.name){ HOLIDAYS[h.date]=h.name; added=true; } });
+  if(added) renderMonth();     // only repaints when something is new → renderMonth can't recurse
+}
+async function ensureHolidays(year){
   if(holidayYears.has(year)) return;
-  holidayYears.add(year);
-  fetch('/api/holidays?year='+year).then(r=>r.ok?r.json():null).then(data=>{
+  holidayYears.add(year);      // set before any await → concurrent renders don't double-fetch
+  const cached=await idbGet('holidays:'+year);
+  if(Array.isArray(cached)) applyHolidays(cached);
+  if(!isOnline()) return;      // offline → the cached year (if any) is all we can show
+  try{
+    const res=await fetch(api('/api/holidays?year='+year));
+    if(!res.ok) return;
+    const data=await res.json();
     if(!data||!Array.isArray(data.holidays)) return;
-    let added=false;
-    data.holidays.forEach(h=>{ if(h.isHoliday!==false){ HOLIDAYS[h.date]=h.name; added=true; } });
-    if(added) renderMonth();   // guarded: year is already in the set so this won't recurse
-  }).catch(()=>{});
+    idbSet('holidays:'+year, data.holidays);
+    holidayConfirmed.add(year);
+    applyHolidays(data.holidays);
+  }catch(e){}
+}
+/* back online: re-arm the years we only ever answered from cache (or not at all) */
+function retryHolidays(){
+  [...holidayYears].forEach(y=>{ if(!holidayConfirmed.has(y)) holidayYears.delete(y); });
+  ensureHolidays(state.view.getFullYear());
 }
 
 /* ---------- boot ---------- */
 async function loadState(){
-  const [ev,cats,links,seen,saved,widget]=await Promise.all([
-    idbGet('events'),idbGet('categories'),idbGet('shareLinks'),idbGet('cmtSeenAt'),idbGet('savedLinks'),idbGet('widgetConfig')
+  const [ev,cats,links,seen,saved,widget,snaps]=await Promise.all([
+    idbGet('events'),idbGet('categories'),idbGet('shareLinks'),idbGet('cmtSeenAt'),idbGet('savedLinks'),idbGet('widgetConfig'),idbGet('friendSnaps')
   ]);
   if(Array.isArray(cats)&&cats.length) state.categories=cats;
   if(Array.isArray(ev)) state.events=ev;          // stored (even empty) → respect it
@@ -1650,7 +1766,18 @@ async function loadState(){
   if(typeof seen==='number') state.cmtSeenAt=seen;
   if(Array.isArray(saved)) state.savedLinks=saved;
   if(widget&&Array.isArray(widget.tokens)) state.widgetConfig=widget;
+  if(snaps&&typeof snaps==='object') state.friendSnaps=snaps;
 }
+/* Everything above renders from IndexedDB, so the calendar is complete with no
+   network. Coming back online we re-sync the server-owned parts: push my public
+   snapshot to live links, re-fetch friends (latest wins), retry holidays. */
+window.addEventListener('online',()=>{
+  toast('다시 연결됐어요');
+  syncAllLive();
+  retryHolidays();
+  if(overlayOn()) refreshOverlays();
+});
+window.addEventListener('offline',()=>toast('오프라인이에요. 내 일정은 그대로 볼 수 있어요'));
 function hideBootLoading(){
   const bl=document.getElementById('bootLoading'); if(!bl) return;
   bl.classList.add('off'); setTimeout(()=>{ if(bl.parentNode) bl.remove(); },320);

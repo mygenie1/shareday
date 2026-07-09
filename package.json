@@ -11,7 +11,8 @@
     "cap": "cap",
     "cap:add:ios": "cap add ios",
     "cap:add:android": "cap add android",
-    "cap:sync": "cap sync"
+    "build:shell": "node scripts/build-shell.mjs",
+    "cap:sync": "npm run build:shell && cap sync"
   },
   "dependencies": {
     "@capacitor/android": "^6.2.0",

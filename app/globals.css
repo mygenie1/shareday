@@ -253,6 +253,9 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .scrim{position:fixed;inset:0;height:100dvh;background:rgba(20,19,14,.44);backdrop-filter:blur(4px);
   display:flex;align-items:flex-end;justify-content:center;z-index:50;opacity:0;pointer-events:none;transition:opacity .24s}
 .scrim.on{opacity:1;pointer-events:auto}
+/* set by setScrollLock() while any sheet is open: the page behind must not move, or
+   the blurred backdrop drifts with it. `top` is written inline (-scrollY). */
+body.scroll-locked{position:fixed;left:0;right:0;width:100%;overflow:hidden}
 /* padding-bottom reserves the home-indicator safe area so sheet content is never
    clipped by it; 88dvh keeps the sheet within the visible viewport on iOS. */
 .sheet{width:100%;max-width:480px;background:var(--panel);border:1px solid var(--line);
@@ -536,6 +539,8 @@ input,textarea,select{font-size:16px}
 .friend-name{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:700}
 .fcat{font-size:11px;font-weight:600;color:var(--ink-soft)}
 .fcat.pending{color:var(--ink-faint)}
+/* cached (offline) friend snapshot: dimmed + dotted so it reads as "not current" */
+.fcat.stale{color:var(--ink-faint);font-weight:500;border-bottom:1px dotted var(--ink-faint)}
 .dt-friend{font-size:9px;vertical-align:middle}
 
 /* home-widget picker (홈 위젯) */

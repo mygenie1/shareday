@@ -24,7 +24,7 @@
         (iOS 45분, Android ~30분 주기 · 앱에서 바꾸면 즉시 reload)
 ```
 - 앱 식별자: **`com.shareday.app`**, App Group: **`group.com.shareday.app`**, 이름 "셰어데이".
-- 앱 본체 로딩: `capacitor.config.ts`의 `server.url = https://shareday-seven.vercel.app`.
+- 앱 본체 로딩: 앱에 번들된 셸(`webDir = capacitor-www`, `npm run build:shell`로 생성). 오프라인에도 열리며, 서버가 필요한 기능만 `https://shareday-seven.vercel.app`으로 호출한다(`middleware.ts`가 CORS 허용).
 
 ---
 
@@ -105,7 +105,7 @@ npx cap sync
 ---
 
 ## 검증 체크리스트
-- [ ] 앱 본체가 기존 웹앱 그대로 뜬다(웹뷰, server.url).
+- [ ] 앱 본체가 기존 웹앱 그대로 뜬다(웹뷰, 번들된 capacitor-www 셸).
 - [ ] 앱 메뉴 → **홈 위젯** → 공개 캘린더 선택 → 저장 → 공유 저장소에 기록.
 - [ ] iOS/안드 위젯이 홈에서 **오늘 공개 일정**을 표시.
 - [ ] 위젯 ↻(iOS17+/안드) 로 내 공개/친구 캘린더 **전환**.
