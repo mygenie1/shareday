@@ -102,10 +102,12 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
 .chips{display:flex;flex-direction:column;gap:3px;overflow:hidden}
 .chip{display:flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2.5px 6px;border-radius:6px;min-width:0;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.4;touch-action:none;
-  /* iOS Safari leaves an anti-aliasing speck where the tinted background meets the
-     rounded corner. Clip the background inside the border and promote the chip to its
-     own compositing layer so Safari repaints the corners cleanly. The tint STAYS. */
-  background-clip:padding-box;-webkit-background-clip:padding-box;transform:translateZ(0)}
+  /* iOS Safari's border-radius clip leaves a faint fringe of the tinted background
+     outside the rounded corners. A fully-opaque -webkit-mask forces the chip through
+     the compositor's mask path, which honours the radius exactly. The tint STAYS. */
+  background-clip:padding-box;-webkit-background-clip:padding-box;
+  -webkit-mask-image:-webkit-radial-gradient(#fff,#000);mask-image:radial-gradient(#fff,#000);
+  will-change:transform}
 .chip>span:nth-child(2){overflow:hidden;text-overflow:ellipsis;min-width:0}
 .chip .lk{margin-left:auto;opacity:.6}
 .more{font-size:10.5px;font-weight:600;color:var(--ink-faint);padding-left:6px}
