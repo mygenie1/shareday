@@ -814,6 +814,16 @@ function attachBlockInteract(bl,PXH,minH){
       // live time label
       const lbl=bl.querySelector('.tg-bt'); if(lbl) lbl.textContent=e.time+(e.end?'–'+e.end:'');
     }
+    /* A block tap opens the detail card from pointerup — but the browser then fires the
+       trailing click, and by that time the scrim already covers the block, so the click
+       hit-tests to the scrim and its backdrop handler closes the card instantly. Eat that
+       one click. (Month chips open from a click handler, so they never had this problem.) */
+    function swallowNextClick(){
+      const kill=ev=>{ ev.stopPropagation(); ev.preventDefault(); clearTimeout(t); };
+      document.addEventListener('click',kill,{capture:true,once:true});
+      // no trailing click on some inputs → drop the listener rather than eat a later real one
+      const t=setTimeout(()=>document.removeEventListener('click',kill,true),400);
+    }
     let finished=false;
     function up(uv){
       if(finished) return; finished=true;                          // idempotent: pointerup OR pointercancel, never both
@@ -823,7 +833,7 @@ function attachBlockInteract(bl,PXH,minH){
       document.removeEventListener('pointercancel',up);
       edgeDir=0; if(edgeRAF) cancelAnimationFrame(edgeRAF);
       bl.classList.remove('pressing','dragging','armed');
-      if(!armed){ if(!cancelled) openEventDetail(e.id); return; }   // quick tap → detail card
+      if(!armed){ if(!cancelled){ swallowNextClick(); openEventDetail(e.id); } return; }   // quick tap → detail card
       if(!moved){ return; }                                         // long-pressed but not dragged → just drop, NO detail
       // long-press already confirmed intent → commit immediately (e holds the new
       // values), then offer undo. No confirm popup.
