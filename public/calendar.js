@@ -1637,7 +1637,10 @@ function widgetOptions(){
 }
 async function pushWidget(){
   const cfg=state.widgetConfig||{tokens:[],selectedIndex:0};
-  const payload={ tokens:cfg.tokens, selectedIndex:cfg.selectedIndex, base:location.origin, savedAt:Date.now() };
+  // base MUST be the deployed API origin, never location.origin: the shell is bundled
+  // with the app, so in native that reads capacitor://localhost (iOS) / https://localhost
+  // (Android) and the widget's fetch would silently fail into a blank widget.
+  const payload={ tokens:cfg.tokens, selectedIndex:cfg.selectedIndex, base:API_ORIGIN, savedAt:Date.now() };
   const br=widgetBridge();
   if(br){
     try{
