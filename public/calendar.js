@@ -66,6 +66,367 @@ function inkOn(hex,dark){const [r,g,b]=hexToRgb(hex);
   if(dark){const f=1.62;return `rgb(${Math.min(255,80+(r*f|0))},${Math.min(255,80+(g*f|0))},${Math.min(255,80+(b*f|0))})`;}
   const f=.6;return `rgb(${r*f|0},${g*f|0},${b*f|0})`;}
 const isDark=()=>state.theme==='dark';
+const rid=()=>Math.random().toString(36).slice(2,8);
+
+/* ============================================================
+   RECURRENCE  —  rule-based, never pre-materialized.
+   A repeating event stores ONE rule; the calendar expands it for the
+   dates currently on screen and throws the instances away again.
+
+     e.rrule     "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE;UNTIL=20261231"
+                 iCalendar RRULE. e.date is the DTSTART (a DATE, so UNTIL
+                 is the YYYYMMDD date form — no time, no timezone).
+     e.exdate    ["2026-07-15"]           occurrences deleted "이번만"
+     e.overrides {"2026-07-15":{...}}     occurrences edited "이번만"
+                 (keyed by the ORIGINAL occurrence date; a patch may carry
+                  its own `date`, which is how a moved instance is stored)
+
+   No rrule → a one-off event, exactly as before. That is the whole
+   back-compat story: old data keeps working untouched.
+   ============================================================ */
+const RR_DAYS=['SU','MO','TU','WE','TH','FR','SA'];
+const RR_FREQ=['DAILY','WEEKLY','MONTHLY','YEARLY'];
+const MAX_ITER=20000;              // runaway guard; 10y of a daily rule is ~3.6k
+function ymd(di){const[y,m,d]=di.split('-').map(Number);return new Date(y,m-1,d);}
+function addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x;}
+function isoAdd(di,n){return iso(addDays(ymd(di),n));}
+
+function parseRule(s){
+  if(!s||typeof s!=='string') return null;
+  const o={freq:'',interval:1,byday:null,bymonthday:null,bysetpos:null,until:null,count:null};
+  s.split(';').forEach(part=>{
+    const i=part.indexOf('='); if(i<0) return;
+    const k=part.slice(0,i).trim().toUpperCase(), v=part.slice(i+1).trim();
+    if(k==='FREQ') o.freq=v.toUpperCase();
+    else if(k==='INTERVAL') o.interval=Math.min(99,Math.max(1,parseInt(v,10)||1));
+    else if(k==='BYDAY') o.byday=v.split(',').map(x=>RR_DAYS.indexOf(x.trim().toUpperCase().slice(-2))).filter(n=>n>=0);
+    else if(k==='BYMONTHDAY') o.bymonthday=parseInt(v,10)||null;
+    else if(k==='BYSETPOS') o.bysetpos=parseInt(v,10)||null;
+    else if(k==='UNTIL') o.until=/^\d{8}/.test(v)?`${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}`:null;
+    else if(k==='COUNT') o.count=Math.max(1,parseInt(v,10)||1);
+  });
+  if(!RR_FREQ.includes(o.freq)) return null;
+  if(o.byday&&!o.byday.length) o.byday=null;
+  return o;
+}
+function formatRule(o){
+  if(!o||!RR_FREQ.includes(o.freq)) return '';
+  const p=['FREQ='+o.freq];
+  if(o.interval>1) p.push('INTERVAL='+o.interval);
+  if(o.byday&&o.byday.length) p.push('BYDAY='+o.byday.slice().sort((a,b)=>a-b).map(d=>RR_DAYS[d]).join(','));
+  if(o.bymonthday) p.push('BYMONTHDAY='+o.bymonthday);
+  if(o.bysetpos) p.push('BYSETPOS='+o.bysetpos);
+  if(o.count) p.push('COUNT='+o.count);              // COUNT and UNTIL are mutually exclusive
+  else if(o.until) p.push('UNTIL='+o.until.replace(/-/g,''));
+  return p.join(';');
+}
+/* the `pos`-th `dow` of a month (pos=-1 → the last one). null when it doesn't exist. */
+function nthWeekdayIso(y,m,dow,pos){
+  if(pos===-1){
+    const last=new Date(y,m+1,0), back=(last.getDay()-dow+7)%7;
+    const d=new Date(y,m,last.getDate()-back);
+    return d.getMonth()===m?iso(d):null;
+  }
+  const first=new Date(y,m,1), fwd=(dow-first.getDay()+7)%7;
+  const d=new Date(y,m,1+fwd+(pos-1)*7);
+  return d.getMonth()===m?iso(d):null;
+}
+/* Rule dates that land inside [fromIso,toIso]. Generation always walks from
+   DTSTART so COUNT counts the whole series (iCal semantics), but only the
+   in-window dates are collected — an old daily rule stays cheap. */
+function ruleDates(dtstart,r,fromIso,toIso){
+  const out=[];
+  if(!r) return out;
+  const start=ymd(dtstart);
+  const hardEnd=(r.until&&r.until<toIso)?r.until:toIso;
+  if(hardEnd<dtstart) return out;
+  const take=(di,seq)=>{                                // seq = 0-based index in the series
+    if(r.count&&seq>=r.count) return false;             // series exhausted
+    if(di>=fromIso&&di<=hardEnd&&di>=dtstart) out.push(di);
+    return true;
+  };
+  if(r.freq==='DAILY'){
+    // skip straight to the first occurrence at/after fromIso — no walking the gap
+    const gap=Math.round((ymd(fromIso>dtstart?fromIso:dtstart)-start)/86400000);
+    let k=Math.max(0,Math.ceil(gap/r.interval));
+    for(let n=0;n<MAX_ITER;n++,k++){
+      const di=iso(addDays(start,k*r.interval));
+      if(di>hardEnd) break;
+      if(!take(di,k)) break;
+    }
+  }else if(r.freq==='WEEKLY'){
+    const days=(r.byday&&r.byday.length?r.byday:[start.getDay()]).slice().sort((a,b)=>a-b);
+    const wk0=addDays(start,-start.getDay());           // Sunday of DTSTART's week
+    // Jump to the stepped week holding fromIso: a rule started years ago costs no more
+    // than one started last month. A week never skips a day, so the series index of that
+    // week is exact — COUNT still counts from DTSTART.
+    const firstWeek=days.filter(d=>d>=start.getDay()).length;   // occurrences in DTSTART's own week
+    const from=fromIso>dtstart?ymd(fromIso):start;
+    const wIdx=Math.round(Math.round((addDays(from,-from.getDay())-wk0)/86400000)/7);
+    const w0=Math.max(0,Math.ceil(wIdx/r.interval));
+    let seq=w0===0?0:firstWeek+(w0-1)*days.length;
+    if(r.count&&seq>=r.count) return out;
+    let stop=false;
+    for(let w=w0;w<MAX_ITER&&!stop;w++){
+      const base=addDays(wk0,w*7*r.interval);
+      if(iso(base)>hardEnd) break;
+      for(const dw of days){
+        const di=iso(addDays(base,dw));
+        if(di<dtstart) continue;                        // days before DTSTART in its own week
+        if(di>hardEnd){stop=true;break;}
+        if(!take(di,seq++)){stop=true;break;}
+      }
+    }
+  }else if(r.freq==='MONTHLY'){
+    const y0=start.getFullYear(), m0=start.getMonth();
+    let seq=0;
+    for(let k=0;k<MAX_ITER;k++){
+      const gm=m0+k*r.interval, y=y0+Math.floor(gm/12), m=((gm%12)+12)%12;
+      if(iso(new Date(y,m,1))>hardEnd) break;
+      let di;
+      if(r.bysetpos&&r.byday&&r.byday.length) di=nthWeekdayIso(y,m,r.byday[0],r.bysetpos);
+      else{ const dom=r.bymonthday||start.getDate(), d=new Date(y,m,dom);
+            di=d.getMonth()===m?iso(d):null; }         // 31일 규칙은 31일이 없는 달을 건너뜀
+      if(di===null) continue;                           // iCal: a non-existent date is skipped, not counted
+      if(di<dtstart) continue;
+      if(!take(di,seq++)) break;
+    }
+  }else if(r.freq==='YEARLY'){
+    const y0=start.getFullYear(), m0=start.getMonth(), dom=start.getDate();
+    const endY=+hardEnd.slice(0,4);
+    let seq=0;
+    for(let k=0;k<MAX_ITER;k++){
+      const y=y0+k*r.interval;
+      if(y>endY) break;
+      const d=new Date(y,m0,dom);
+      if(d.getMonth()!==m0) continue;                   // 2월 29일 → 평년은 건너뜀
+      const di=iso(d);
+      if(di<dtstart) continue;
+      if(di>hardEnd) break;
+      if(!take(di,seq++)) break;
+    }
+  }
+  return out;
+}
+/* One materialized occurrence. A plain copy — mutating it never touches state.
+   `id` is the instance key `<baseId>@<occurrence date>`; base ids never contain '@'. */
+function makeInst(base,occ){
+  const ov=(base.overrides&&base.overrides[occ])||null;
+  const e={...base,...(ov||{}),id:base.id+'@'+occ,baseId:base.id,occDate:occ,repeat:true};
+  e.date=(ov&&ov.date)||occ;                            // "이번만" 편집으로 옮겨진 날짜
+  e.isPrivate=!!base.isPrivate;                         // 공개/프라이빗은 시리즈 단위 — 오버라이드가 못 뒤집는다
+  delete e.overrides; delete e.exdate;
+  return e;
+}
+/* An "이번만" edit can move an occurrence to another day, so a rule that has one
+   is generated a little past the window's edges and filtered on the instance's real
+   date. Rules without a moved override — nearly all of them — pay nothing for it. */
+const OV_SLACK=62;
+const hasMovedOverride=base=>!!(base.overrides&&Object.keys(base.overrides).some(k=>base.overrides[k]&&base.overrides[k].date));
+function expandRange(fromIso,toIso){
+  const out=[];
+  state.events.forEach(base=>{
+    const r=base.rrule?parseRule(base.rrule):null;
+    if(!r){ if(base.date>=fromIso&&base.date<=toIso) out.push(base); return; }
+    const ex=new Set(base.exdate||[]);
+    const slack=hasMovedOverride(base)?OV_SLACK:0;
+    ruleDates(base.date,r,isoAdd(fromIso,-slack),isoAdd(toIso,slack)).forEach(occ=>{
+      if(ex.has(occ)) return;                           // "이번만" 삭제된 인스턴스
+      const inst=makeInst(base,occ);
+      if(inst.date>=fromIso&&inst.date<=toIso) out.push(inst);
+    });
+  });
+  return out;
+}
+function expandForDate(di){ return expandRange(di,di); }
+
+/* ---------- instance keys: chips/blocks/rows all carry `<baseId>[@occ]` ---------- */
+function splitKey(key){ const i=String(key||'').lastIndexOf('@'); return i<0?{id:key,occ:null}:{id:key.slice(0,i),occ:key.slice(i+1)}; }
+function baseOf(key){ return state.events.find(x=>x.id===splitKey(key).id)||null; }
+function instOf(key){
+  const {occ}=splitKey(key), base=baseOf(key);
+  if(!base) return null;
+  return occ?makeInst(base,occ):base;
+}
+const isRepeat=e=>!!(e&&e.rrule);
+
+/* human summary of a rule, e.g. "매주 월·수 · 2026년 12월 31일까지" */
+function describeRule(str,dtstart){
+  const r=parseRule(str); if(!r) return '';
+  const n=r.interval, D=DOW;
+  let s='';
+  if(r.freq==='DAILY') s=(n===1?'매일':`${n}일마다`);
+  else if(r.freq==='WEEKLY'){
+    const days=(r.byday&&r.byday.length?r.byday:[ymd(dtstart).getDay()]).slice().sort((a,b)=>a-b).map(d=>D[d]).join('·');
+    s=(n===1?'매주':`${n}주마다`)+' '+days;
+  }else if(r.freq==='MONTHLY'){
+    const head=(n===1?'매달':`${n}개월마다`);
+    if(r.bysetpos&&r.byday&&r.byday.length){
+      const pos=r.bysetpos===-1?'마지막':['','첫째','둘째','셋째','넷째'][r.bysetpos]||'';
+      s=`${head} ${pos} ${D[r.byday[0]]}요일`;
+    }else s=`${head} ${r.bymonthday||ymd(dtstart).getDate()}일`;
+  }else if(r.freq==='YEARLY'){
+    const d=ymd(dtstart);
+    s=(n===1?'매년':`${n}년마다`)+` ${d.getMonth()+1}월 ${d.getDate()}일`;
+  }
+  if(r.count) s+=` · ${r.count}회`;
+  else if(r.until){ const u=ymd(r.until); s+=` · ${u.getFullYear()}년 ${u.getMonth()+1}월 ${u.getDate()}일까지`; }
+  return s;
+}
+const REPEAT_SVG='<path d="M17 2l3 3-3 3"/><path d="M4 11.5V11a4 4 0 0 1 4-4h12"/><path d="M7 22l-3-3 3-3"/><path d="M20 12.5v.5a4 4 0 0 1-4 4H4"/>';
+const repeatIcon=cls=>`<svg class="svg rp ${cls||''}" viewBox="0 0 24 24">${REPEAT_SVG}</svg>`;
+
+/* ---------- writing rules back: exceptions and the "앞으로 전체" split ---------- */
+/* undo for a rule change is a whole-list restore: the event list is small and a
+   split touches two events at once, so per-field undo would be fragile. */
+function snapshotEvents(){ return JSON.parse(JSON.stringify(state.events)); }
+function restoreEvents(snap){ state.events=snap; }
+
+/* "이번 일정만" 수정 — the occurrence keeps its slot in the rule, plus a patch.
+   isPrivate never lands in an override: it is one flag per event, so flipping the
+   series in the share sheet must hide every occurrence with no exception left behind. */
+function applyOne(base,occ,patch){
+  const p={...patch};
+  if(p.date===occ) delete p.date;                       // unchanged date → don't store it
+  if('isPrivate' in p){ base.isPrivate=!!p.isPrivate; delete p.isPrivate; }
+  base.overrides={...(base.overrides||{}),[occ]:{...((base.overrides||{})[occ]||{}),...p}};
+}
+/* "이번 일정만" 삭제 — EXDATE. */
+function deleteOne(base,occ){
+  base.exdate=[...new Set([...(base.exdate||[]),occ])].sort();
+  if(base.overrides&&base.overrides[occ]){ const o={...base.overrides}; delete o[occ]; base.overrides=o; }
+}
+const pickDates=(obj,keep)=>{const o={};Object.keys(obj||{}).forEach(k=>{if(keep(k))o[k]=obj[k];});return o;};
+/* Move a rule's weekday/monthday anchors onto a new start date, so "앞으로 전체"
+   dragging 월요일 반복 to a 화요일 makes it a 화요일 반복 (not a stray Tuesday). */
+function reanchorRule(r,d){
+  if(r.freq==='WEEKLY'&&r.byday&&r.byday.length===1) r.byday=[d.getDay()];
+  else if(r.freq==='MONTHLY'){
+    if(r.bysetpos&&r.byday){ r.byday=[d.getDay()]; if(r.bysetpos!==-1) r.bysetpos=Math.ceil(d.getDate()/7); }
+    else if(r.bymonthday) r.bymonthday=d.getDate();
+  }
+}
+/* "이번 및 앞으로 전체" — cut the old rule the day before this occurrence and start a
+   fresh event here. Past occurrences (and their exceptions) are left exactly as they
+   were: there is no retroactive edit anywhere in this app.
+   newRuleStr: undefined = keep the rule as-is · '' = stop repeating · a string = replace. */
+function splitSeries(base,occ,patch,newRuleStr){
+  const oldRule=parseRule(base.rrule);
+  const ruleStr=(newRuleStr===undefined)?base.rrule:newRuleStr;
+  const rule=parseRule(ruleStr);
+  const newDate=patch.date||occ;
+  if(rule&&newDate!==occ&&newRuleStr===undefined) reanchorRule(rule,ymd(newDate));
+  // COUNT is spent by the occurrences already behind us — the tail gets the remainder
+  if(rule&&rule.count&&newRuleStr===undefined){
+    const consumed=ruleDates(base.date,oldRule,base.date,isoAdd(occ,-1)).length;
+    rule.count=Math.max(1,rule.count-consumed);
+  }
+  // the day / the rule moved → old occurrence keys no longer name anything; drop them
+  const anchorsMoved=(newDate!==occ)||(newRuleStr!==undefined&&newRuleStr!==base.rrule);
+  const head={...base,...patch,id:'e'+rid(),date:newDate};
+  if(rule){
+    head.rrule=formatRule(rule);
+    head.exdate=anchorsMoved?[]:(base.exdate||[]).filter(d=>d>=occ);
+    head.overrides=anchorsMoved?{}:pickDates(base.overrides,d=>d>=occ);
+  }else{ delete head.rrule; delete head.exdate; delete head.overrides; }
+  delete head.baseId; delete head.occDate; delete head.repeat;
+
+  if(occ<=base.date){                                   // first occurrence → the whole series is this one
+    const keepId=base.id;
+    Object.keys(base).forEach(k=>{ if(!(k in head)) delete base[k]; });   // e.g. rrule when 반복 안 함
+    Object.assign(base,head,{id:keepId});
+    return;
+  }
+  const cut=parseRule(base.rrule);
+  cut.count=null; cut.until=isoAdd(occ,-1);
+  base.rrule=formatRule(cut);
+  base.exdate=(base.exdate||[]).filter(d=>d<occ);
+  base.overrides=pickDates(base.overrides,d=>d<occ);
+  state.events.push(head);
+}
+/* "이번 및 앞으로 전체" 삭제 — same cut, no tail. */
+function deleteFuture(base,occ){
+  if(occ<=base.date){ state.events=state.events.filter(x=>x.id!==base.id); return; }
+  const r=parseRule(base.rrule);
+  r.count=null; r.until=isoAdd(occ,-1);
+  base.rrule=formatRule(r);
+  base.exdate=(base.exdate||[]).filter(d=>d<occ);
+  base.overrides=pickDates(base.overrides,d=>d<occ);
+}
+
+/* ---------- 수정/삭제 범위 물음 (반복 일정에만) ---------- */
+let scopeCb=null;
+function ensureScopeSheet(){
+  if(document.getElementById('scopeScrim')) return;
+  const scrim=document.createElement('div');
+  scrim.className='scrim'; scrim.id='scopeScrim';
+  scrim.innerHTML=`
+    <div class="sheet" role="dialog" aria-modal="true" style="max-width:380px">
+      <h2 id="scopeTitle">반복 일정</h2>
+      <p class="sub" id="scopeMsg"></p>
+      <button class="scope-btn" id="scopeOne">
+        <b>이번 일정만</b><span id="scopeOneHint">이 날짜만 바뀌고 나머지는 그대로예요</span></button>
+      <button class="scope-btn" id="scopeFuture">
+        <b>이번 및 앞으로 전체</b><span id="scopeFutureHint">이 날짜부터 이후 반복이 모두 바뀌어요</span></button>
+      <div class="sheet-actions"><button class="btn ghost" id="scopeCancel" style="flex:1">취소</button></div>
+    </div>`;
+  document.body.appendChild(scrim);
+  scrim.onclick=ev=>{ if(ev.target===scrim) resolveScope(null); };
+  $('#scopeOne').onclick=()=>resolveScope('one');
+  $('#scopeFuture').onclick=()=>resolveScope('future');
+  $('#scopeCancel').onclick=()=>resolveScope(null);
+}
+function resolveScope(v){ closeScrim('#scopeScrim'); if(scopeCb){const cb=scopeCb;scopeCb=null;cb(v);} }
+/* kind: '수정' | '삭제'. Resolves 'one' | 'future' | null(취소). */
+function askScope(kind,name){
+  ensureScopeSheet();
+  const del=kind==='삭제';
+  $('#scopeTitle').textContent=del?'반복 일정 삭제':'반복 일정 수정';
+  $('#scopeMsg').textContent=`'${name||'이 일정'}'은(는) 반복 일정이에요. 어디까지 ${kind}할까요?`;
+  $('#scopeOneHint').textContent=del?'이 날짜 하나만 지워요':'이 날짜만 바뀌고 나머지는 그대로예요';
+  $('#scopeFutureHint').textContent=del?'이 날짜부터 이후 반복을 모두 지워요':'이 날짜부터 이후 반복이 모두 바뀌어요';
+  $('#scopeOne').classList.toggle('danger',del);
+  $('#scopeFuture').classList.toggle('danger',del);
+  openScrim('#scopeScrim');
+  return new Promise(res=>{ scopeCb=res; });
+}
+/* The one place an edit lands: single events just take the patch; repeating ones ask
+   first. `msg` non-empty → commit with an undo toast (drag/drop); empty → silent save. */
+async function commitPatch(key,patch,msg){
+  const base=baseOf(key); if(!base) return false;
+  const occ=splitKey(key).occ||base.date;              // a bare key on a rule → its first occurrence
+  const snap=snapshotEvents();
+  if(!base.rrule){
+    Object.assign(base,patch);
+  }else{
+    const scope=await askScope('수정',base.title);
+    if(!scope){ reRender(true); return false; }         // repaint drops any live drag preview
+    if(scope==='one') applyOne(base,occ,patch);
+    else splitSeries(base,occ,patch);
+  }
+  reRender(true);                                       // reRender persists + pushes live links
+  if(msg) toastUndo(msg,()=>{ restoreEvents(snap); reRender(true); });
+  return true;
+}
+/* Same, for removal. Single events keep the plain confirm; repeating ones get the scope sheet. */
+async function commitDelete(key){
+  const base=baseOf(key); if(!base) return;
+  const occ=splitKey(key).occ||base.date;
+  const inst=instOf(key), nm=(inst&&inst.title)||'이 일정';
+  const snap=snapshotEvents();
+  if(!base.rrule){
+    const ok=await showConfirm({title:'일정 삭제', msg:`'${nm}' 일정을 삭제할까요?`, okLabel:'삭제'});
+    if(!ok) return;
+    state.events=state.events.filter(x=>x.id!==base.id);
+    reRender(true); toast('삭제했어요'); return;
+  }
+  const scope=await askScope('삭제',nm);
+  if(!scope) return;
+  if(scope==='one') deleteOne(base,occ); else deleteFuture(base,occ);
+  reRender(true);
+  toastUndo(scope==='one'?'이 날짜의 일정을 삭제했어요':'이후 반복을 삭제했어요',
+    ()=>{ restoreEvents(snap); reRender(true); });
+}
 
 /* ---------- theme ---------- */
 function applyTheme(){
@@ -169,11 +530,14 @@ function renderMonth(){
   ensureHolidays(y);
   const first=new Date(y,m,1), start=new Date(first); start.setDate(1-first.getDay());
   const todayIso=iso(new Date());
+  // one expansion for the whole 6-week grid, bucketed by day — never per cell
+  const mineByDay={};
+  expandRange(iso(start),iso(addDays(start,41))).forEach(e=>{(mineByDay[e.date]=mineByDay[e.date]||[]).push(e);});
   let html='';
   for(let i=0;i<42;i++){
     const d=new Date(start); d.setDate(start.getDate()+i);
     const di=iso(d), out=d.getMonth()!==m, sun=d.getDay()===0, sat=d.getDay()===6, hol=HOLIDAYS[di];
-    const mineList=state.events.filter(e=>e.date===di).map(e=>({e,mine:true}));
+    const mineList=(mineByDay[di]||[]).map(e=>({e,mine:true}));
     const frList=overlayEventsForDate(di).map(o=>({e:o.e,mine:false,friend:o.friend}));
     const all=[...mineList,...frList].sort((a,b)=>(a.e.time||'').localeCompare(b.e.time||''));
     const shown=all.slice(0,2), extra=all.length-shown.length;
@@ -182,6 +546,7 @@ function renderMonth(){
       if(it.mine){const c=cat(e.catId);
         return `<div class="chip" data-eid="${e.id}" style="--cat:${c.color};background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">
         <span style="overflow:hidden;text-overflow:ellipsis">${esc(e.title)}</span>
+        ${isRepeat(e)?repeatIcon():''}
         ${e.isPrivate?'<svg class="svg lk" viewBox="0 0 24 24" style="width:10px;height:10px;stroke-width:2.4"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}</div>`;
       }
       const col=it.friend.color;   // friend event: source-colored, read-only
@@ -220,7 +585,7 @@ function attachMonthDrag(){
   $$('#daysGrid .chip[data-eid]').forEach(chip=>{
     chip.addEventListener('pointerdown',ev=>{
       if(ev.button!==undefined && ev.button!==0) return;
-      const e=state.events.find(x=>x.id===chip.dataset.eid); if(!e) return;
+      const key=chip.dataset.eid, e=instOf(key); if(!e) return;   // `e` is a copy for a repeating instance
       const startX=ev.clientX, startY=ev.clientY;
       const gr=chip.getBoundingClientRect();
       const offX=ev.clientX-gr.left, offY=ev.clientY-gr.top;   // grab point → clone stays under the finger
@@ -260,9 +625,8 @@ function attachMonthDrag(){
             const el=document.elementFromPoint(mv.clientX,mv.clientY);
             const cell=el&&el.closest?el.closest('#daysGrid .cell'):null;
             if(cell&&cell.dataset.date&&cell.dataset.date!==e.date){
-              const prevDate=e.date, target=cell.dataset.date;   // long-press = intent; commit now, offer undo
-              e.date=target; renderMonth(); renderTimeline(); afterMutate();
-              toastUndo('날짜를 옮겼어요', ()=>{ e.date=prevDate; renderMonth(); renderTimeline(); afterMutate(); });
+              // long-press = intent; a repeating instance asks 이번만/앞으로 전체 first, then undo
+              commitPatch(key,{date:cell.dataset.date},'날짜를 옮겼어요');
             }
           }
           setTimeout(()=>{monthDragMoved=false;},0);   // always clear the click-guard once armed
@@ -395,8 +759,9 @@ function renderMonthPicker(){
    (FAB / "이 날에 추가" / empty-day double-click). Clicking an existing event
    anywhere opens the read-only detail card first (openEventDetail), never this. */
 function openEventEdit(id,presetDate){
-  state.editingId=id;
-  const e=id?state.events.find(x=>x.id===id):null;
+  const e=id?instOf(id):null;
+  state.editingId=id;                       // instance key
+  state.editingOcc=e?(e.occDate||null):null;
   $('#evTitle').textContent=e?'일정 편집':'일정 추가';
   $('#fTitle').value=e?e.title:'';
   $('#fDate').value=e?e.date:(presetDate||iso(new Date()));
@@ -406,6 +771,9 @@ function openEventEdit(id,presetDate){
   state.form.endTouched=!!(e&&e.end);
   state.form.catId=e?e.catId:state.categories[0].id;
   state.form.isPrivate=e?!!e.isPrivate:false;
+  // the rule always belongs to the whole series, so it is read from (and written to) the base
+  state.form.ruleOrig=(e&&e.rrule)||'';
+  state.form.rule=parseRule(state.form.ruleOrig);
   const sw=$('#privSwitch');
   sw.classList.toggle('on',state.form.isPrivate);
   sw.setAttribute('aria-checked',state.form.isPrivate);
@@ -413,7 +781,153 @@ function openEventEdit(id,presetDate){
   $('#evDelete').style.display=e?'block':'none';
   renderCatPick();
   buildQuickTime();
+  buildRepeat(); renderRepeat();
   openScrim('#evScrim'); setTimeout(()=>$('#fTitle').focus(),120);
+}
+
+/* ---------- 반복 설정 ---------- */
+/* Injected once, like 빠른 시간 and the share sheet, so the markup export stays clean.
+   Progressive: pick a 주기 first; 간격·요일·종료 only appear once it repeats. */
+function buildRepeat(){
+  if(document.getElementById('rpFreq')) return;
+  const dateField=document.querySelector('#evScrim #fDate');
+  if(!dateField) return;
+  const wrap=document.createElement('div');
+  wrap.className='field'; wrap.id='repField';
+  wrap.innerHTML=`
+    <label>반복</label>
+    <div class="seg rp-freq" id="rpFreq">
+      <button type="button" data-f="">반복 안 함</button><button type="button" data-f="DAILY">매일</button>
+      <button type="button" data-f="WEEKLY">매주</button><button type="button" data-f="MONTHLY">매달</button>
+      <button type="button" data-f="YEARLY">매년</button>
+    </div>
+    <div class="rp-detail" id="rpDetail" hidden>
+      <div class="rp-line">
+        <span class="rp-lbl">간격</span>
+        <input class="inp rp-num" id="rpInterval" type="number" min="1" max="99" step="1" value="1">
+        <span class="rp-unit" id="rpUnit">주마다</span>
+      </div>
+      <div class="rp-line rp-days" id="rpDays" hidden></div>
+      <div class="rp-line" id="rpMonthLine" hidden>
+        <span class="rp-lbl">기준</span>
+        <div class="seg rp-mode" id="rpMonthMode"></div>
+      </div>
+      <div class="rp-line">
+        <span class="rp-lbl">종료</span>
+        <div class="seg rp-mode" id="rpEnd">
+          <button type="button" data-e="never">계속</button><button type="button" data-e="until">날짜까지</button><button type="button" data-e="count">횟수</button>
+        </div>
+      </div>
+      <div class="rp-line" id="rpUntilLine" hidden><input class="inp" id="rpUntil" type="date"></div>
+      <div class="rp-line" id="rpCountLine" hidden>
+        <input class="inp rp-num" id="rpCount" type="number" min="1" max="999" step="1" value="10"><span class="rp-unit">회 반복 후 종료</span>
+      </div>
+    </div>
+    <div class="rp-sum" id="rpSum"></div>`;
+  dateField.closest('.field').after(wrap);
+
+  $$('#rpFreq button').forEach(b=>b.onclick=()=>{ setFreq(b.dataset.f); renderRepeat(); });
+  $('#rpInterval').oninput=function(){
+    if(!state.form.rule) return;
+    state.form.rule.interval=Math.min(99,Math.max(1,parseInt(this.value,10)||1));
+    renderRepeatSummary();
+  };
+  $$('#rpEnd button').forEach(b=>b.onclick=()=>{ setEndMode(b.dataset.e); renderRepeat(); });
+  $('#rpUntil').oninput=function(){ if(state.form.rule&&this.value){ state.form.rule.until=this.value; renderRepeatSummary(); } };
+  $('#rpCount').oninput=function(){
+    if(!state.form.rule) return;
+    state.form.rule.count=Math.min(999,Math.max(1,parseInt(this.value,10)||1));
+    renderRepeatSummary();
+  };
+  // moving the date re-anchors the "이 일정 요일/날짜" defaults the rule was seeded with
+  $('#fDate').addEventListener('change',()=>{
+    const r=state.form.rule; if(!r) return;
+    const d=ymd($('#fDate').value||iso(new Date()));
+    if(r.freq==='WEEKLY'&&r.byday&&r.byday.length===1) r.byday=[d.getDay()];
+    else if(r.freq==='MONTHLY') reanchorRule(r,d);
+    renderRepeat();
+  });
+}
+function formDate(){ return $('#fDate').value||iso(new Date()); }
+function setFreq(f){
+  if(!f){ state.form.rule=null; return; }
+  const d=ymd(formDate());
+  const prev=state.form.rule;
+  const r={freq:f, interval:(prev&&prev.interval)||1, byday:null, bymonthday:null, bysetpos:null,
+           until:(prev&&prev.until)||null, count:(prev&&prev.count)||null};
+  if(f==='WEEKLY') r.byday=[d.getDay()];              // 기본값: 이 일정의 요일
+  if(f==='MONTHLY') r.bymonthday=d.getDate();         // 기본값: 이 일정의 날짜
+  state.form.rule=r;
+}
+function setEndMode(m){
+  const r=state.form.rule; if(!r) return;
+  if(m==='never'){ r.until=null; r.count=null; }
+  else if(m==='until'){ r.count=null; r.until=r.until||isoAdd(formDate(),90); }
+  else { r.until=null; r.count=r.count||10; }         // COUNT and UNTIL are exclusive in iCal
+}
+function endMode(r){ return r.count?'count':(r.until?'until':'never'); }
+const RP_UNIT={DAILY:'일마다',WEEKLY:'주마다',MONTHLY:'개월마다',YEARLY:'년마다'};
+function renderRepeat(){
+  const r=state.form.rule;
+  $$('#rpFreq button').forEach(b=>b.classList.toggle('on', b.dataset.f===(r?r.freq:'')));
+  const det=$('#rpDetail');
+  if(!r){ det.hidden=true; renderRepeatSummary(); return; }
+  det.hidden=false;
+  $('#rpInterval').value=r.interval;
+  $('#rpUnit').textContent=RP_UNIT[r.freq]||'';
+
+  const days=$('#rpDays');
+  days.hidden=r.freq!=='WEEKLY';
+  if(r.freq==='WEEKLY'){
+    days.innerHTML='<span class="rp-lbl">요일</span>'+DOW.map((n,i)=>
+      `<button type="button" class="rp-dow${(r.byday||[]).includes(i)?' on':''}${i===0?' sun':''}${i===6?' sat':''}" data-d="${i}">${n}</button>`).join('');
+    $$('#rpDays .rp-dow').forEach(b=>b.onclick=()=>{
+      const i=+b.dataset.d, cur=new Set(r.byday||[]);
+      cur.has(i)?cur.delete(i):cur.add(i);
+      if(!cur.size) cur.add(i);                       // never leave a weekly rule with no weekday
+      r.byday=[...cur].sort((a,b)=>a-b);
+      renderRepeat();
+    });
+  }
+
+  const ml=$('#rpMonthLine');
+  ml.hidden=r.freq!=='MONTHLY';
+  if(r.freq==='MONTHLY'){
+    const d=ymd(formDate()), nth=Math.ceil(d.getDate()/7);
+    const last=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
+    const isLast=d.getDate()+7>last;                  // no same weekday later in the month
+    const byPos=!!r.bysetpos;
+    $('#rpMonthMode').innerHTML=
+      `<button type="button" data-m="day"${byPos?'':' class="on"'}>매달 ${d.getDate()}일</button>`+
+      `<button type="button" data-m="pos"${byPos?' class="on"':''}>${isLast?'마지막':['','첫째','둘째','셋째','넷째'][nth]} ${DOW[d.getDay()]}요일</button>`;
+    $$('#rpMonthMode button').forEach(b=>b.onclick=()=>{
+      if(b.dataset.m==='day'){ r.bysetpos=null; r.byday=null; r.bymonthday=d.getDate(); }
+      else { r.bymonthday=null; r.byday=[d.getDay()]; r.bysetpos=isLast?-1:nth; }
+      renderRepeat();
+    });
+  }
+
+  const em=endMode(r);
+  $$('#rpEnd button').forEach(b=>b.classList.toggle('on',b.dataset.e===em));
+  $('#rpUntilLine').hidden=em!=='until';
+  $('#rpCountLine').hidden=em!=='count';
+  if(em==='until'){ $('#rpUntil').value=r.until||''; $('#rpUntil').min=formDate(); }
+  if(em==='count') $('#rpCount').value=r.count||10;
+  renderRepeatSummary();
+}
+function renderRepeatSummary(){
+  const el=$('#rpSum'); if(!el) return;
+  const r=state.form.rule;
+  el.textContent=r?describeRule(formatRule(normRule(r)),formDate()):'';
+}
+/* fill in the defaults the rule leans on DTSTART for, so the stored string is self-describing */
+function normRule(r){
+  const o={...r}, d=ymd(formDate());
+  if(o.freq==='WEEKLY'&&(!o.byday||!o.byday.length)) o.byday=[d.getDay()];
+  if(o.freq==='MONTHLY'&&!o.bysetpos&&!o.bymonthday) o.bymonthday=d.getDate();
+  if(o.freq!=='WEEKLY'&&!(o.freq==='MONTHLY'&&o.bysetpos)) o.byday=null;
+  if(o.until&&o.until<formDate()) o.until=formDate();   // an end before the start would yield nothing
+  return o;
 }
 /* quick time-of-day pills above 시작/종료 — a fast starting point, since the OS
    time picker itself can't be changed. Injected once (keeps the markup export clean). */
@@ -459,6 +973,7 @@ function ensureDetailModal(){
         </div>
       </div>
       <div class="dt-when" id="dtWhen"></div>
+      <div class="dt-repeat" id="dtRepeat"></div>
       <div class="dt-cat" id="dtCat"></div>
       <p class="dt-memo" id="dtMemo"></p>
       <div class="dt-vis" id="dtVis"></div>
@@ -471,15 +986,14 @@ function ensureDetailModal(){
   $('#dtEdit').onclick=()=>{ const id=state.detailId; menu.classList.remove('on'); closeScrim('#dtScrim'); openEventEdit(id); };
   $('#dtDelete').onclick=async()=>{
     menu.classList.remove('on');
-    const e=state.events.find(x=>x.id===state.detailId); const nm=e?e.title:'이 일정';
-    const ok=await showConfirm({title:'일정 삭제', msg:`'${nm}' 일정을 삭제할까요?`, okLabel:'삭제'});
-    if(!ok) return;
-    state.events=state.events.filter(x=>x.id!==state.detailId);
-    closeScrim('#dtScrim'); reRender(true); toast('삭제했어요');
+    const key=state.detailId;
+    closeScrim('#dtScrim');                 // the scope/confirm sheet takes over from here
+    await commitDelete(key);
   };
 }
+/* `id` is an instance key: `<baseId>` for a one-off, `<baseId>@<occurrence>` when repeating */
 function openEventDetail(id){
-  const e=state.events.find(x=>x.id===id); if(!e) return;
+  const e=instOf(id); if(!e) return;
   ensureDetailModal();
   const mn=document.getElementById('dtMenu'); if(mn) mn.classList.remove('on');   // start closed
   const more=document.getElementById('dtMore'); if(more) more.style.display='';    // editable: show ⋯ (friend view hides it)
@@ -488,6 +1002,8 @@ function openEventDetail(id){
   $('#dtDot').style.background=c.color;
   $('#dtTitle').textContent=e.title||'제목 없음';
   $('#dtWhen').textContent=fmtDetailWhen(e);
+  $('#dtRepeat').innerHTML=isRepeat(e)
+    ? `${repeatIcon()}<span>${esc(describeRule(e.rrule,e.occDate||e.date))}</span>` : '';
   $('#dtCat').innerHTML=`<span class="dt-cat-tag" style="background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">${esc(c.name)}</span>`;
   const memo=$('#dtMemo');
   if(e.memo){ memo.textContent=e.memo; memo.style.display='block'; } else memo.style.display='none';
@@ -521,7 +1037,7 @@ function openDaySheet(d){
   const t=$('#dsTitle');
   t.className='ds-title'+(hol?' holiday':d.getDay()===0?' sun':d.getDay()===6?' sat':'');
   t.innerHTML=`${d.getMonth()+1}월 ${d.getDate()}일 <span class="ds-dow">(${wd})</span>`+(hol?` <span class="ds-hol">· ${esc(hol)}</span>`:'');
-  const evs=state.events.filter(e=>e.date===di).sort((a,b)=>(a.time||'99').localeCompare(b.time||'99'));
+  const evs=expandForDate(di).sort((a,b)=>(a.time||'99').localeCompare(b.time||'99'));
   $('#dsCount').textContent=evs.length?`일정 ${evs.length}개`:'';
   const list=$('#dsList');
   if(evs.length){
@@ -546,8 +1062,10 @@ function renderCatPick(){
 /* one-line explanation under the privacy toggle, reflecting the current choice */
 function syncPrivHint(){
   const h=document.getElementById('privHint'); if(!h) return;
-  h.textContent=state.form.isPrivate ? '나만 볼 수 있어요 · 공유 링크에서 숨겨져요'
-                                     : '친구에게 보여요 · 공유 링크에 표시돼요';
+  const base=state.form.isPrivate ? '나만 볼 수 있어요 · 공유 링크에서 숨겨져요'
+                                  : '친구에게 보여요 · 공유 링크에 표시돼요';
+  // one flag per event, so on a repeating event it necessarily covers every occurrence
+  h.textContent=state.form.ruleOrig ? base+' · 반복 전체에 적용돼요' : base;
 }
 $('#privSwitch').onclick=function(){
   state.form.isPrivate=!state.form.isPrivate;
@@ -560,7 +1078,7 @@ $('#fTime').oninput=function(){
   if(this.value && !state.form.endTouched){ $('#fEnd').value=addMinT(this.value,60); }
 };
 $('#fEnd').oninput=function(){ state.form.endTouched=true; };
-$('#evSave').onclick=()=>{
+$('#evSave').onclick=async()=>{
   const title=$('#fTitle').value.trim()||'제목 없음';
   const date=$('#fDate').value||iso(new Date());
   const time=$('#fTime').value;
@@ -568,20 +1086,46 @@ $('#evSave').onclick=()=>{
   if(time && !end) end=addMinT(time,60);
   if(time && end && end<=time) end=addMinT(time,60);   // guard: end after start
   const patch={title,date,time,end:time?end:'',memo:$('#fMemo').value.trim(),catId:state.form.catId,isPrivate:state.form.isPrivate};
-  if(state.editingId){
-    Object.assign(state.events.find(x=>x.id===state.editingId),patch);
-  }else{
-    state.events.push({id:'e'+Math.random().toString(36).slice(2,8),...patch});
+  const ruleStr=state.form.rule?formatRule(normRule(state.form.rule)):'';
+
+  if(!state.editingId){
+    const e={id:'e'+rid(),...patch};
+    if(ruleStr) e.rrule=ruleStr;
+    state.events.push(e);
+    closeScrim('#evScrim');reRender(true);toast(ruleStr?'반복 일정을 저장했어요':'저장했어요');
+    return;
   }
-  closeScrim('#evScrim');reRender(true);toast('저장했어요');
+  const base=baseOf(state.editingId);
+  if(!base) return;
+  const occ=state.editingOcc||base.date;
+
+  if(!base.rrule){                       // 단발 → 그대로 저장(범위 물음 없음). 반복을 새로 켰다면 규칙만 붙는다.
+    Object.assign(base,patch);
+    if(ruleStr) base.rrule=ruleStr; else delete base.rrule;
+    closeScrim('#evScrim');reRender(true);toast('저장했어요');
+    return;
+  }
+  // repeating: a changed rule is inherently a series-level change, so it can only mean
+  // "이번 및 앞으로 전체" — an override can hold fields, not a rule. Otherwise, ask.
+  if(ruleStr!==base.rrule){
+    const snap=snapshotEvents();
+    splitSeries(base,occ,patch,ruleStr);
+    closeScrim('#evScrim'); reRender(true);
+    toastUndo(ruleStr?'이 날짜부터 반복을 바꿨어요':'이 날짜부터 반복을 해제했어요',()=>{ restoreEvents(snap); reRender(true); });
+    return;
+  }
+  closeScrim('#evScrim');
+  const scope=await askScope('수정',base.title);
+  if(!scope) return;
+  const snap=snapshotEvents();
+  if(scope==='one') applyOne(base,occ,patch); else splitSeries(base,occ,patch);
+  reRender(true);
+  toastUndo(scope==='one'?'이 날짜의 일정만 바꿨어요':'이 날짜부터 바꿨어요',()=>{ restoreEvents(snap); reRender(true); });
 };
 $('#evDelete').onclick=async()=>{
-  const e=state.events.find(x=>x.id===state.editingId);
-  const nm=e?e.title:'이 일정';
-  const ok=await showConfirm({title:'일정 삭제', msg:`'${nm}' 일정을 삭제할까요?`, okLabel:'삭제'});
-  if(!ok) return;
-  state.events=state.events.filter(x=>x.id!==state.editingId);
-  closeScrim('#evScrim');reRender(true);toast('삭제했어요');
+  const key=state.editingId;
+  closeScrim('#evScrim');
+  await commitDelete(key);       // 단발이면 바로 확인, 반복이면 이번만/앞으로 전체
 };
 $('#evCancel').onclick=()=>closeScrim('#evScrim');
 $('#fab').onclick=()=>openEventEdit(null, iso(state.selected));
@@ -605,8 +1149,9 @@ function rowHtml(e){
     <span class="tl-dot" style="background:${c.color}"></span>
     <div class="tl-main">
       <div class="tl-nm" style="color:${inkOn(c.color,isDark())}">${esc(e.title)}
+        ${isRepeat(e)?repeatIcon():''}
         ${e.isPrivate?'<svg class="svg lk" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}</div>
-      <div class="tl-cat">${esc(c.name)}</div>
+      <div class="tl-cat">${esc(c.name)}${isRepeat(e)?' · '+esc(describeRule(e.rrule,e.occDate||e.date)):''}</div>
       ${memo}
     </div></div>`;
 }
@@ -630,8 +1175,11 @@ function renderTimeline(){
     // above and below — enough empty grid to scroll into and to drag events onto
     // nearby hours, without unrolling the whole 24h. No events → a calm 08–19.
     const dayIsos=days.map(iso);
+    const weekByDay={};                       // one expansion for the 7 visible days
+    expandRange(dayIsos[0],dayIsos[6]).forEach(e=>{(weekByDay[e.date]=weekByDay[e.date]||[]).push(e);});
+    const mineOn=di=>weekByDay[di]||[];
     const frTimedAll=dayIsos.flatMap(di=>overlayEventsForDate(di).filter(o=>o.e.time).map(o=>o.e));
-    const timed=state.events.filter(e=>e.time && dayIsos.includes(e.date)).concat(frTimedAll);  // friends widen the window too
+    const timed=dayIsos.flatMap(di=>mineOn(di).filter(e=>e.time)).concat(frTimedAll);  // friends widen the window too
     let minH,maxH;
     if(timed.length){
       let lo=24,hi=0;
@@ -652,14 +1200,14 @@ function renderTimeline(){
         <span class="tg-dow">${WD[d.getDay()]}</span><span class="tg-dn">${d.getDate()}</span>${hol?`<span class="tg-hol">${esc(hol)}</span>`:''}</div>`;});
 
     // all-day / untimed strip (mine + friends')
-    const untimedByDay=days.map(d=>state.events.filter(e=>e.date===iso(d)&&!e.time));
+    const untimedByDay=days.map(d=>mineOn(iso(d)).filter(e=>!e.time));
     const frUntimedByDay=days.map(d=>overlayEventsForDate(iso(d)).filter(o=>!o.e.time));
     const hasUntimed=untimedByDay.some(a=>a.length)||frUntimedByDay.some(a=>a.length);
     let alldayCells='';
     if(hasUntimed){
       alldayCells=days.map((d,i)=>{
         const mineC=untimedByDay[i].map(e=>{const c=cat(e.catId);
-          return `<div class="tg-chip" data-eid="${e.id}" style="--cat:${c.color};background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">${esc(e.title)}</div>`;}).join('');
+          return `<div class="tg-chip" data-eid="${e.id}" style="--cat:${c.color};background:${tint(c.color,isDark())};color:${inkOn(c.color,isDark())}">${esc(e.title)}${isRepeat(e)?repeatIcon():''}</div>`;}).join('');
         const frC=frUntimedByDay[i].map(o=>{const col=o.friend.color;
           return `<div class="tg-chip friend" data-ftoken="${o.friend.token}" data-feid="${o.e.id}" style="--cat:${col};background:${tint(col,isDark())};color:${inkOn(col,isDark())}"><span class="fdot" style="background:${col}"></span>${esc(o.e.title)}</div>`;}).join('');
         return `<div class="tg-adcell" data-date="${iso(d)}">${mineC}${frC}</div>`;
@@ -674,7 +1222,7 @@ function renderTimeline(){
     let colsHtml='';
     days.forEach(d=>{
       const di=iso(d);
-      const mineItems=state.events.filter(e=>e.date===di&&e.time).map(e=>({e,mine:true}));
+      const mineItems=mineOn(di).filter(e=>e.time).map(e=>({e,mine:true}));
       const frItems=overlayEventsForDate(di).filter(o=>o.e.time).map(o=>({e:o.e,mine:false,friend:o.friend}));
       const items=[...mineItems,...frItems].sort((a,b)=>byT(a.e,b.e));
       // lane packing by real start/end (mine + friends' share lanes so nothing overlaps)
@@ -694,7 +1242,7 @@ function renderTimeline(){
           --cat:${color};background:${tint(color,isDark())};border-left:3px solid ${color};color:${inkOn(color,isDark())}">
           ${it.mine?'<span class="tg-grip tg-grip-top" data-grip="top"></span>':''}
           <span class="tg-bt">${e.time}${showEnd&&e.end?'–'+e.end:''}</span>
-          <span class="tg-bn">${fdot}${esc(e.title)}${e.memo?' <svg class="svg" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.2;display:inline;vertical-align:baseline"><path d="M4 6h16M4 12h16M4 18h10"/></svg>':''}${(it.mine&&e.isPrivate)?' <svg class="svg lk" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.4"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}</span>
+          <span class="tg-bn">${fdot}${esc(e.title)}${(it.mine&&isRepeat(e))?' '+repeatIcon():''}${e.memo?' <svg class="svg" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.2;display:inline;vertical-align:baseline"><path d="M4 6h16M4 12h16M4 18h10"/></svg>':''}${(it.mine&&e.isPrivate)?' <svg class="svg lk" viewBox="0 0 24 24" style="width:9px;height:9px;stroke-width:2.4"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>':''}</span>
           ${it.mine?'<span class="tg-grip tg-grip-bot" data-grip="bot"></span>':''}
         </div>`;}).join('');
       let lines=''; for(let hh=minH;hh<maxH;hh++) lines+=`<div class="tg-line" style="top:${(hh-minH)*PXH}px"></div>`;
@@ -752,14 +1300,14 @@ function attachBlockInteract(bl,PXH,minH){
     if(ev.button!==undefined && ev.button!==0) return;
     const grip=ev.target.getAttribute && ev.target.getAttribute('data-grip');
     const mode=grip?('resize-'+grip):'move';
-    const e=state.events.find(x=>x.id===bl.dataset.eid); if(!e) return;
+    const key=bl.dataset.eid, inst=instOf(key); if(!inst) return;
     // LONG-PRESS to pick up, then drag; a short tap opens the detail card. Moving
-    // before the press completes is a scroll. On drop we confirm before committing,
-    // so an accidental nudge is always recoverable.
+    // before the press completes is a scroll. `e` is a throwaway copy the drag paints
+    // from — state is only written on drop (after the 반복 범위 question, if any).
+    const e={...inst};
     const cols=[...$$('#tlBody .tg-col')];
     const startX=ev.clientX, startY=ev.clientY;
-    const origStart=timeToMin(e.time), origEnd=e.end?timeToMin(e.end):origStart+60, origDate=e.date;
-    const prev0={time:e.time, end:e.end, date:e.date};   // exact pre-drag state, for undo
+    const origStart=timeToMin(e.time), origEnd=e.end?timeToMin(e.end):origStart+60;
     let armed=false, moved=false, cancelled=false, lpTimer=0;
     const sc=tgScroller();
     let edgeDir=0, edgeRAF=0, lastEv=ev;
@@ -833,12 +1381,11 @@ function attachBlockInteract(bl,PXH,minH){
       document.removeEventListener('pointercancel',up);
       edgeDir=0; if(edgeRAF) cancelAnimationFrame(edgeRAF);
       bl.classList.remove('pressing','dragging','armed');
-      if(!armed){ if(!cancelled){ swallowNextClick(); openEventDetail(e.id); } return; }   // quick tap → detail card
+      if(!armed){ if(!cancelled){ swallowNextClick(); openEventDetail(key); } return; }   // quick tap → detail card
       if(!moved){ return; }                                         // long-pressed but not dragged → just drop, NO detail
-      // long-press already confirmed intent → commit immediately (e holds the new
-      // values), then offer undo. No confirm popup.
-      reRender(true);
-      toastUndo(mode==='move'?'일정을 옮겼어요':'시간을 바꿨어요', ()=>{ Object.assign(e,prev0); reRender(true); });
+      // long-press already confirmed intent → commit the previewed values, then offer
+      // undo. A repeating instance is asked 이번만/앞으로 전체 inside commitPatch.
+      commitPatch(key,{time:e.time,end:e.end,date:e.date},mode==='move'?'일정을 옮겼어요':'시간을 바꿨어요');
     }
     document.addEventListener('pointermove',move);
     document.addEventListener('pointerup',up);
@@ -952,7 +1499,11 @@ function deleteCategory(id){
   const c=state.categories.find(x=>x.id===id); if(!c||c.fixed) return;
   const used=state.events.filter(e=>e.catId===id).length;
   const other=state.categories.find(x=>x.fixed);   // '기타'
-  state.events.forEach(e=>{ if(e.catId===id) e.catId=other.id; });
+  state.events.forEach(e=>{
+    if(e.catId===id) e.catId=other.id;
+    // "이번만" 수정본도 카테고리를 들고 있으므로 함께 옮긴다 (안 그러면 죽은 id가 남는다)
+    if(e.overrides) Object.keys(e.overrides).forEach(k=>{ if(e.overrides[k].catId===id) e.overrides[k].catId=other.id; });
+  });
   state.categories=state.categories.filter(x=>x.id!==id);
   if(state.form.catId===id) state.form.catId=other.id;
   renderCatList();renderLegend();renderCatPick();renderMonth();renderTimeline();afterMutate();
@@ -986,6 +1537,8 @@ function fmtWhen(e){
   const [y,m,d]=e.date.split('-').map(Number);
   const dt=new Date(y,m-1,d);
   const wd=['일','월','화','수','목','금','토'][dt.getDay()];
+  // a rule shows itself, not just its first date — the link carries every occurrence
+  if(isRepeat(e)) return `${describeRule(e.rrule,e.date)}${e.time?' · '+e.time:' · 종일'}`;
   return `${m}월 ${d}일 (${wd})${e.time?' · '+e.time:' · 종일'}`;
 }
 function evRowHtml(e){
@@ -996,7 +1549,7 @@ function evRowHtml(e){
   const bg=e.isPrivate?'':`background:${tint(c.color,isDark())}`;
   const col=e.isPrivate?'':`color:${inkOn(c.color,isDark())}`;
   return `<div class="evrow${e.isPrivate?' priv':''}" data-id="${e.id}" style="${bg}">
-    <span class="nm" style="${col}">${esc(e.title)}<span class="when" style="color:${e.isPrivate?'var(--ink-faint)':inkOn(c.color,isDark())};opacity:.72">${fmtWhen(e)}</span></span>${dir}</div>`;
+    <span class="nm" style="${col}"><span class="evrow-t">${esc(e.title)}${isRepeat(e)?repeatIcon():''}</span><span class="when" style="color:${e.isPrivate?'var(--ink-faint)':inkOn(c.color,isDark())};opacity:.72">${fmtWhen(e)}</span></span>${dir}</div>`;
 }
 function byDate(a,b){return (a.date+ (a.time||'')).localeCompare(b.date+(b.time||''));}
 function renderZones(){
@@ -1077,6 +1630,7 @@ function closeTopOverlay(){
   if(menuOpen && topScrimZ<60){ closeMenu(); return; }
   if(!topScrim) { if(menuOpen) closeMenu(); return; }
   if(topScrim.id==='confirmScrim'){ resolveConfirm(false); return; }   // also settles the pending promise
+  if(topScrim.id==='scopeScrim'){ resolveScope(null); return; }
   topScrim.classList.remove('on');
 }
 function syncBackOpen(){   // called right after any overlay is shown
@@ -1094,6 +1648,7 @@ window.addEventListener('popstate',()=>{
 $$('.scrim').forEach(sc=>sc.onclick=e=>{if(e.target===sc)sc.classList.remove('on');});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){
   const cs=$('#confirmScrim'); if(cs&&cs.classList.contains('on')) resolveConfirm(false);  // don't leave a pending confirm hanging
+  const ss=document.getElementById('scopeScrim'); if(ss&&ss.classList.contains('on')) resolveScope(null);
   $$('.scrim.on').forEach(s=>s.classList.remove('on'));closeMenu();}});
 
 /* ---------- toast ---------- */
@@ -1142,12 +1697,33 @@ function afterMutate(){ persist(); syncAllLive(); }
 state.shareLinks=[];   // [{token,url,name,createdAt,expiresAt,allowComments,revoked,count}], newest last
 state.cmtSeenAt=0;     // last time the owner viewed comments → drives the "새 N" badge
 function saveShareLinks(){ idbSet('shareLinks', state.shareLinks); }
-function publicEvents(){ return state.events.filter(e=>!e.isPrivate); }  // client pre-filter; server re-filters too
+/* The recipient gets real dates, never rules: a repeating event is expanded across the
+   share window before it is uploaded, so their page needs no RRULE code at all.
+   Privacy is per instance — a base marked private contributes nothing, and an
+   "이번만" override that flips isPrivate hides just that one date.
+   The window is anchored on the current month so a re-push keeps the same instance ids
+   (`<baseId>@<date>`), which is what comments hang off. */
+const SHARE_MONTHS=12;
+const SHARE_CAP=2000;                    // matches the server's sanitizeEvents() cap
+function shareWindow(){
+  const t=new Date();
+  return [iso(new Date(t.getFullYear(),t.getMonth()-1,1)),
+          iso(new Date(t.getFullYear(),t.getMonth()+1+SHARE_MONTHS,0))];
+}
+function publicSnapshot(){
+  const [from,to]=shareWindow();
+  return expandRange(from,to)
+    .filter(e=>!e.isPrivate)
+    .sort(byDate)
+    .slice(0,SHARE_CAP)
+    .map(e=>({id:e.id,date:e.date,time:e.time||'',end:e.end||'',
+              title:e.title,catId:e.catId,memo:e.memo||'',isPrivate:false}));
+}
 /* payload for ONE link — carries that link's own expiry + comment pref so a sync
    never clobbers them. expiresAt is fixed at creation, so it doesn't slide forward. */
 function linkPayload(l){
   return {
-    events: publicEvents(),
+    events: publicSnapshot(),
     categories: state.categories,
     allowComments: l.allowComments!==false,
     expiresAt: l.expiresAt||null,
@@ -1172,7 +1748,7 @@ async function createShareLink(){
   btn.disabled=true; const prev=btn.innerHTML; btn.textContent='만드는 중…';
   try{
     const res=await fetch(api('/api/share'),{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({events:publicEvents(),categories:state.categories,allowComments:createCmt,expiresDays:createExp})});
+      body:JSON.stringify({events:publicSnapshot(),categories:state.categories,allowComments:createCmt,expiresDays:createExp})});
     const data=await res.json();
     if(res.ok){
       const link={token:data.token,url:data.url,name,createdAt:Date.now(),
@@ -1228,7 +1804,8 @@ function buildShareSheet(){
   const sheet=document.querySelector('#shScrim .sheet'); if(!sheet) return;
   sheet.innerHTML=`
     <h2>내 캘린더 공유하기</h2>
-    <p class="sub">내 공개 일정만 친구에게 보여요. 프라이빗 일정은 어떤 링크에서도 보이지 않아요.</p>
+    <p class="sub">내 공개 일정만 친구에게 보여요. 프라이빗 일정은 어떤 링크에서도 보이지 않아요.
+      반복 일정(↻)은 앞으로 1년치가 펼쳐져 담겨요.</p>
     <div id="warnBox"></div>
     <div class="zone-h pub"><svg class="svg" viewBox="0 0 24 24" style="width:15px;height:15px"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg> 공개됨 <span class="cnt" id="pubCnt"></span></div>
     <div id="pubZone"></div>
@@ -1498,6 +2075,7 @@ function openFriendDetail(token,eid){
   $('#dtDot').style.background=c.color;
   $('#dtTitle').textContent=e.title||'제목 없음';
   $('#dtWhen').textContent=fmtDetailWhen(e);
+  $('#dtRepeat').innerHTML='';        // friends' snapshots arrive already expanded — no rule to show
   const fc=e.catId?c.cats[e.catId]:null;
   const fcol=(fc&&fc.color)||c.color;
   $('#dtCat').innerHTML=(fc&&fc.name)

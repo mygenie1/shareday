@@ -611,3 +611,56 @@ input,textarea,select{font-size:16px}
   box-shadow:0 0 0 2px var(--accent),0 6px 18px -4px rgba(0,0,0,.28) !important;z-index:4}
 .tg-block.armed .tg-grip::after{content:"";position:absolute;left:50%;transform:translateX(-50%);
   width:22px;height:3px;border-radius:3px;background:var(--accent);opacity:.7}
+
+/* ============================================================
+   반복 일정 (RRULE)
+   ============================================================ */
+
+/* ↻ marker — a repeating instance, wherever it appears */
+.svg.rp{width:11px;height:11px;stroke-width:2.4;flex:none;opacity:.62;stroke:currentColor;fill:none}
+.chip .rp{width:10px;height:10px}
+.tg-chip .rp{width:9px;height:9px;display:inline;vertical-align:-1px;margin-left:2px}
+.tg-bn .rp{width:9px;height:9px;display:inline;vertical-align:baseline}
+.tl-nm .rp{width:12px;height:12px;opacity:.55}
+.evrow-t{display:flex;align-items:center;gap:5px;min-width:0}
+.evrow-t .rp{opacity:.7}
+
+/* detail mini-card: the rule, in words */
+.dt-repeat{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;
+  color:var(--accent);margin:-6px 0 12px}
+.dt-repeat:empty{display:none}
+.dt-repeat .rp{width:13px;height:13px;opacity:1}
+
+/* editor: 주기 → 세부(간격·요일·기준·종료). Detail box only appears once it repeats. */
+.rp-freq{margin-bottom:10px}
+.rp-detail{border:1px solid var(--line-soft);border-radius:12px;padding:12px;
+  background:var(--bg);margin-bottom:8px}
+.rp-detail[hidden]{display:none}
+.rp-line{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.rp-line:last-child{margin-bottom:0}
+.rp-line[hidden]{display:none}
+.rp-lbl{font-size:12.5px;font-weight:600;color:var(--ink-soft);min-width:32px}
+.rp-num{width:74px;height:38px;text-align:center;padding:0}
+.rp-unit{font-size:12.5px;color:var(--ink-soft);font-weight:500}
+.rp-mode{margin-bottom:0}
+.rp-days{gap:6px}
+.rp-dow{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);
+  background:var(--panel);font-size:12.5px;font-weight:600;color:var(--ink-soft);
+  transition:border-color .15s,background .15s,color .15s}
+.rp-dow.sun{color:var(--danger)}
+.rp-dow.sat{color:var(--sat)}
+.rp-dow.on,.rp-dow.on.sun,.rp-dow.on.sat{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.rp-sum{font-size:12px;font-weight:600;color:var(--accent);padding-left:2px}
+.rp-sum:empty{display:none}
+
+/* 범위 물음: 이번만 / 앞으로 전체. Above the confirm layer — a delete opens it from
+   the detail card, and it settles a pending promise, so back/Escape route to it. */
+#scopeScrim{z-index:72}
+.scope-btn{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;
+  text-align:left;padding:13px 15px;margin-bottom:8px;border:1px solid var(--line);
+  border-radius:13px;background:var(--panel);transition:border-color .15s,background .15s}
+.scope-btn b{font-size:14px;font-weight:700;color:var(--ink)}
+.scope-btn span{font-size:11.5px;font-weight:500;color:var(--ink-faint)}
+.scope-btn:hover{border-color:var(--accent);background:var(--accent-soft)}
+.scope-btn.danger:hover{border-color:var(--danger);background:transparent}
+.scope-btn.danger b{color:var(--danger)}
