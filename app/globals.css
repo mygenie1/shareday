@@ -251,7 +251,8 @@ button{font-family:inherit;cursor:pointer;border:none;background:none;color:inhe
    the *visible* area — on iOS Safari this keeps the bottom sheet flush with the
    visible bottom instead of hiding behind/under the toolbar (no floating gap). */
 .scrim{position:fixed;inset:0;height:100dvh;background:rgba(20,19,14,.44);backdrop-filter:blur(4px);
-  display:flex;align-items:flex-end;justify-content:center;z-index:50;opacity:0;pointer-events:none;transition:opacity .24s}
+  display:flex;align-items:flex-end;justify-content:center;z-index:50;opacity:0;pointer-events:none;transition:opacity .24s;
+  overscroll-behavior:contain}
 .scrim.on{opacity:1;pointer-events:auto}
 /* set by setScrollLock() while any sheet is open: the page behind must not move, or
    the blurred backdrop drifts with it. `top` is written inline (-scrollY). */
@@ -261,7 +262,8 @@ body.scroll-locked{position:fixed;left:0;right:0;width:100%;overflow:hidden}
 .sheet{width:100%;max-width:480px;background:var(--panel);border:1px solid var(--line);
   border-radius:22px 22px 0 0;box-shadow:0 -8px 40px -8px rgba(20,19,14,.28);
   padding:22px 22px calc(28px + env(safe-area-inset-bottom));
-  transform:translateY(20px);transition:transform .28s cubic-bezier(.2,.8,.2,1);max-height:88vh;max-height:88dvh;overflow-y:auto}
+  transform:translateY(20px);transition:transform .28s cubic-bezier(.2,.8,.2,1);max-height:88vh;max-height:88dvh;
+  overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 .scrim.on .sheet{transform:translateY(0)}
 @media(min-width:560px){.scrim{align-items:center}.sheet{border-radius:22px}}
 .sheet h2{font-size:18px;font-weight:700;letter-spacing:-.02em;margin-bottom:3px}
@@ -643,8 +645,14 @@ input,textarea,select{font-size:16px}
 .rp-num{width:74px;height:38px;text-align:center;padding:0}
 .rp-unit{font-size:12.5px;color:var(--ink-soft);font-weight:500}
 .rp-mode{margin-bottom:0}
-.rp-days{gap:6px}
-.rp-dow{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);
+/* label on its own line, then all 7 weekday circles evenly in one row (grid), so the
+   last day never wraps even at ~360px. Buttons fill their track but stay round via
+   aspect-ratio and cap on wider sheets. */
+.rp-days{display:block;flex-wrap:nowrap}
+.rp-days-lbl{display:block;margin-bottom:8px}
+.rp-dow-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.rp-dow{width:100%;max-width:40px;aspect-ratio:1;margin:0 auto;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;border:1px solid var(--line);
   background:var(--panel);font-size:12.5px;font-weight:600;color:var(--ink-soft);
   transition:border-color .15s,background .15s,color .15s}
 .rp-dow.sun{color:var(--danger)}

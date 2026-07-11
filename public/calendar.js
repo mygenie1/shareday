@@ -907,8 +907,8 @@ function renderRepeat(){
   const days=$('#rpDays');
   days.hidden=r.freq!=='WEEKLY';
   if(r.freq==='WEEKLY'){
-    days.innerHTML='<span class="rp-lbl">요일</span>'+DOW.map((n,i)=>
-      `<button type="button" class="rp-dow${(r.byday||[]).includes(i)?' on':''}${i===0?' sun':''}${i===6?' sat':''}" data-d="${i}">${n}</button>`).join('');
+    days.innerHTML='<span class="rp-lbl rp-days-lbl">요일</span><div class="rp-dow-grid">'+DOW.map((n,i)=>
+      `<button type="button" class="rp-dow${(r.byday||[]).includes(i)?' on':''}${i===0?' sun':''}${i===6?' sat':''}" data-d="${i}">${n}</button>`).join('')+'</div>';
     $$('#rpDays .rp-dow').forEach(b=>b.onclick=()=>{
       const i=+b.dataset.d, cur=new Set(r.byday||[]);
       cur.has(i)?cur.delete(i):cur.add(i);
