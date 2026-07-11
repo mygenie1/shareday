@@ -185,9 +185,10 @@ function ruleDates(dtstart,r,fromIso,toIso){
       if(iso(new Date(y,m,1))>hardEnd) break;
       let di;
       if(r.bysetpos&&r.byday&&r.byday.length) di=nthWeekdayIso(y,m,r.byday[0],r.bysetpos);
-      else{ const dom=r.bymonthday||start.getDate(), d=new Date(y,m,dom);
-            di=d.getMonth()===m?iso(d):null; }         // 31일 규칙은 31일이 없는 달을 건너뜀
-      if(di===null) continue;                           // iCal: a non-existent date is skipped, not counted
+      else{ const last=new Date(y,m+1,0).getDate();     // 그달의 마지막 날
+            const dom=Math.min(r.bymonthday||start.getDate(),last); // 없는 날짜(29·30·31)는 마지막 날로 보정 — 달을 건너뛰지 않음
+            di=iso(new Date(y,m,dom)); }
+      if(di===null) continue;                           // (요일 기준) 존재하지 않는 n번째 요일만 건너뜀
       if(di<dtstart) continue;
       if(!take(di,seq++)) break;
     }
@@ -797,9 +798,7 @@ function buildRepeat(){
   wrap.innerHTML=`
     <label>반복</label>
     <div class="seg rp-freq" id="rpFreq">
-      <button type="button" data-f="">반복 안 함</button><button type="button" data-f="DAILY">매일</button>
-      <button type="button" data-f="WEEKLY">매주</button><button type="button" data-f="MONTHLY">매달</button>
-      <button type="button" data-f="YEARLY">매년</button>
+      <button type="button" data-f="">반복 안 함</button><button type="button" data-f="WEEKLY">매주</button><button type="button" data-f="MONTHLY">매달</button>
     </div>
     <div class="rp-detail" id="rpDetail" hidden>
       <div class="rp-line">
@@ -810,8 +809,17 @@ function buildRepeat(){
       <div class="rp-line rp-days" id="rpDays" hidden></div>
       <div class="rp-line" id="rpMonthLine" hidden>
         <span class="rp-lbl">기준</span>
-        <div class="seg rp-mode" id="rpMonthMode"></div>
+        <div class="seg rp-mode" id="rpMonthMode">
+          <button type="button" data-m="day">날짜로</button><button type="button" data-m="pos">요일로</button>
+        </div>
       </div>
+      <div class="rp-line" id="rpMonthDay" hidden>
+        <span class="rp-unit">매달</span><select class="inp rp-sel" id="rpDom"></select><span class="rp-unit">일</span>
+      </div>
+      <div class="rp-line" id="rpMonthPos" hidden>
+        <span class="rp-unit">매달</span><select class="inp rp-sel" id="rpPos"></select><select class="inp rp-sel" id="rpPosDow"></select><span class="rp-unit">요일</span>
+      </div>
+      <div class="rp-note" id="rpDomNote" hidden></div>
       <div class="rp-line">
         <span class="rp-lbl">종료</span>
         <div class="seg rp-mode" id="rpEnd">
@@ -839,14 +847,34 @@ function buildRepeat(){
     state.form.rule.count=Math.min(999,Math.max(1,parseInt(this.value,10)||1));
     renderRepeatSummary();
   };
-  // moving the date re-anchors the "이 일정 요일/날짜" defaults the rule was seeded with
+  // 매달: 날짜/요일 기준 토글 + 그 자리에서 값 선택 (일정 날짜와 독립적)
+  $('#rpDom').innerHTML=Array.from({length:31},(_,i)=>`<option value="${i+1}">${i+1}</option>`).join('');
+  $('#rpPos').innerHTML=RP_POS.map(p=>`<option value="${p.v}">${p.t}</option>`).join('');
+  $('#rpPosDow').innerHTML=DOW.map((n,i)=>`<option value="${i}">${n}</option>`).join('');
+  $$('#rpMonthMode button').forEach(b=>b.onclick=()=>{ setMonthMode(b.dataset.m); renderRepeat(); });
+  $('#rpDom').onchange=function(){
+    const r=state.form.rule; if(!r) return;
+    r.bymonthday=Math.min(31,Math.max(1,parseInt(this.value,10)||1)); r.bysetpos=null; r.byday=null;
+    renderRepeat();
+  };
+  $('#rpPos').onchange=function(){ const r=state.form.rule; if(r){ r.bysetpos=parseInt(this.value,10); renderRepeatSummary(); } };
+  $('#rpPosDow').onchange=function(){ const r=state.form.rule; if(r){ r.byday=[parseInt(this.value,10)]; renderRepeatSummary(); } };
+  // 날짜를 옮기면 매주는 이 일정의 요일을 따라가지만, 매달 날짜/요일은 직접 고른 값이라 건드리지 않는다
   $('#fDate').addEventListener('change',()=>{
     const r=state.form.rule; if(!r) return;
     const d=ymd($('#fDate').value||iso(new Date()));
     if(r.freq==='WEEKLY'&&r.byday&&r.byday.length===1) r.byday=[d.getDay()];
-    else if(r.freq==='MONTHLY') reanchorRule(r,d);
     renderRepeat();
   });
+}
+/* 매달 요일 기준의 순서 라벨: 첫째~넷째 + 마지막(-1). 다섯째는 없는 달이 많아 넣지 않는다. */
+const RP_POS=[{v:1,t:'첫째'},{v:2,t:'둘째'},{v:3,t:'셋째'},{v:4,t:'넷째'},{v:-1,t:'마지막'}];
+function setMonthMode(m){
+  const r=state.form.rule; if(!r) return;
+  const d=ymd(formDate());
+  if(m==='pos'){ r.bymonthday=null; if(!r.byday||!r.byday.length) r.byday=[d.getDay()];
+                 if(!r.bysetpos) r.bysetpos=Math.min(4,Math.ceil(d.getDate()/7)); }
+  else { r.bysetpos=null; r.byday=null; r.bymonthday=r.bymonthday||d.getDate(); }
 }
 function formDate(){ return $('#fDate').value||iso(new Date()); }
 function setFreq(f){
@@ -890,21 +918,20 @@ function renderRepeat(){
     });
   }
 
-  const ml=$('#rpMonthLine');
-  ml.hidden=r.freq!=='MONTHLY';
-  if(r.freq==='MONTHLY'){
-    const d=ymd(formDate()), nth=Math.ceil(d.getDate()/7);
-    const last=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();
-    const isLast=d.getDate()+7>last;                  // no same weekday later in the month
-    const byPos=!!r.bysetpos;
-    $('#rpMonthMode').innerHTML=
-      `<button type="button" data-m="day"${byPos?'':' class="on"'}>매달 ${d.getDate()}일</button>`+
-      `<button type="button" data-m="pos"${byPos?' class="on"':''}>${isLast?'마지막':['','첫째','둘째','셋째','넷째'][nth]} ${DOW[d.getDay()]}요일</button>`;
-    $$('#rpMonthMode button').forEach(b=>b.onclick=()=>{
-      if(b.dataset.m==='day'){ r.bysetpos=null; r.byday=null; r.bymonthday=d.getDate(); }
-      else { r.bymonthday=null; r.byday=[d.getDay()]; r.bysetpos=isLast?-1:nth; }
-      renderRepeat();
-    });
+  const ml=$('#rpMonthLine'), mDay=$('#rpMonthDay'), mPos=$('#rpMonthPos'), note=$('#rpDomNote');
+  const isMonthly=r.freq==='MONTHLY', byPos=isMonthly&&!!r.bysetpos;
+  ml.hidden=!isMonthly; mDay.hidden=!isMonthly||byPos; mPos.hidden=!byPos; note.hidden=true;
+  if(isMonthly){
+    $$('#rpMonthMode button').forEach(b=>b.classList.toggle('on',(b.dataset.m==='pos')===byPos));
+    if(byPos){
+      $('#rpPos').value=String(r.bysetpos);
+      $('#rpPosDow').value=String(r.byday&&r.byday.length?r.byday[0]:ymd(formDate()).getDay());
+    }else{
+      const dom=r.bymonthday||ymd(formDate()).getDate();
+      $('#rpDom').value=String(dom);
+      if(dom>=29){ note.hidden=false;                 // 없는 달은 건너뛰지 않고 마지막 날로 보정된다
+        note.textContent=`${dom}일이 없는 달(예: 2월)에는 그달 마지막 날에 표시돼요.`; }
+    }
   }
 
   const em=endMode(r);

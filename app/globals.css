@@ -650,6 +650,9 @@ input,textarea,select{font-size:16px}
 .rp-dow.sun{color:var(--danger)}
 .rp-dow.sat{color:var(--sat)}
 .rp-dow.on,.rp-dow.on.sun,.rp-dow.on.sat{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.rp-sel{width:auto;min-width:60px;height:38px;padding:0 10px;font-size:14px}
+.rp-note{font-size:12px;font-weight:500;color:var(--ink-soft);padding-left:2px;line-height:1.4}
+.rp-note[hidden]{display:none}
 .rp-sum{font-size:12px;font-weight:600;color:var(--accent);padding-left:2px}
 .rp-sum:empty{display:none}
 
