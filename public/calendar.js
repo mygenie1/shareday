@@ -41,6 +41,7 @@ const PALETTE = ['#10B981','#34D399','#3B82F6','#7C6BE8','#EF6B7D','#FF8A5B','#F
    and the routes allow that origin explicitly (see middleware.ts). */
 const API_ORIGIN='https://shareday-seven.vercel.app';
 const isNative=()=>!!(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform());
+const isIOS=()=>isNative()&&window.Capacitor.getPlatform&&window.Capacitor.getPlatform()==='ios';
 const api=p=>(isNative()?API_ORIGIN:'')+p;
 const isOnline=()=>navigator.onLine!==false;
 const OFFLINE_MSG='오프라인이에요. 연결되면 다시 시도해 주세요';
@@ -1717,8 +1718,9 @@ let persistT;
 function persist(){clearTimeout(persistT);persistT=setTimeout(()=>{
   idbSet('events',state.events); idbSet('categories',state.categories);
 },250);}
-/* called after every change: save locally + push the public snapshot to every live link */
-function afterMutate(){ persist(); syncAllLive(); }
+/* called after every change: save locally + push the public snapshot to every live link
+   (+ rewrite the iOS widget snapshot; no-op everywhere else) */
+function afterMutate(){ persist(); syncAllLive(); scheduleWidgetSnapshot(); }
 
 /* ---------- share links: one server row per link, all owned by this device ---------- */
 state.shareLinks=[];   // [{token,url,name,createdAt,expiresAt,allowComments,revoked,count}], newest last
@@ -2285,7 +2287,11 @@ function ensureWidgetSheet(){
   $('#widgetCancel').onclick=()=>closeScrim('#widgetScrim');
   $('#widgetSave').onclick=saveWidgetChoice;
 }
-function openWidget(){ ensureWidgetSheet(); renderWidgetSheet(); openScrim('#widgetScrim'); }
+/* iOS gets the App Group widgets (my events); web + Android keep the share-token sheet */
+function openWidget(){
+  if(isIOS()){ openWidgetIOS(); return; }
+  ensureWidgetSheet(); renderWidgetSheet(); openScrim('#widgetScrim');
+}
 function renderWidgetSheet(){
   const hint=$('#widgetHint');
   hint.innerHTML = widgetNative()
@@ -2341,6 +2347,157 @@ async function saveWidgetChoice(){
   toast(tokens.length?(widgetNative()?'위젯에 적용했어요':'위젯 캘린더를 저장했어요'):'위젯에서 캘린더를 비웠어요');
 }
 
+/* ============================================================
+   iOS home-screen widgets (App Group snapshot — no network)
+   ------------------------------------------------------------
+   The iOS widgets render from a snapshot this app writes into the App Group; they
+   never call the server. So the snapshot carries the events themselves, not share
+   tokens: MY events (straight from IndexedDB, private ones included only when the
+   user opts in) plus each saved friend's cached public snapshot.
+
+   Everything here is iOS-only. Android keeps reading the legacy `shareday_widget`
+   key written by pushWidget() above (its widget fetches public snapshots from the
+   server), so this writes a SEPARATE key and leaves that path alone.
+   ============================================================ */
+const WIDGET_KEY_IOS='shareday_widget_v2';
+const WIDGET_WEEK_START=0;              // Sunday — matches weekRange()/renderMonth() on the web
+state.widgetIOS={selectedIndex:0, includePrivate:false};
+function saveWidgetIOS(){ idbSet('widgetIOS', state.widgetIOS); }
+
+/* [0] is always my calendar; saved friends follow, so a friend's index is stable
+   for as long as the saved list is. */
+function widgetTargets(){
+  return [{kind:'mine', name:'내 일정'}]
+    .concat(state.savedLinks.map(l=>({kind:'friend', name:recvOwnerName(l), token:l.token})));
+}
+/* Enough range to fill both widgets: the month grid (this month) and the week list
+   (this week), with slack so neither runs dry near a month boundary. */
+function widgetRange(){
+  const t=new Date();
+  const mStart=new Date(t.getFullYear(),t.getMonth(),1);
+  const mEnd=new Date(t.getFullYear(),t.getMonth()+1,0);
+  const wStart=addDays(t,-t.getDay());                 // this week's Sunday
+  const wEnd=addDays(wStart,20);                       // this week + 2 spare weeks
+  return [iso(mStart<wStart?mStart:wStart), iso(mEnd>wEnd?mEnd:wEnd)];
+}
+/* The widget can't join categories, so the colour is resolved here. Private events
+   are dropped at the SOURCE when the toggle is off — they are never handed to the
+   widget at all, rather than filtered on the other side. */
+function buildWidgetPayload(){
+  const cfg=state.widgetIOS;
+  const targets=widgetTargets();
+  const [from,to]=widgetRange();
+  const events=[];
+  const mine=expandRange(from,to);
+  (cfg.includePrivate?mine:mine.filter(e=>!e.isPrivate)).forEach(e=>events.push({
+    targetIndex:0, date:e.date, time:e.time||'', end:e.end||'',
+    title:e.title||'', color:cat(e.catId).color, isPrivate:!!e.isPrivate,
+  }));
+  targets.forEach((t,i)=>{
+    if(t.kind!=='friend') return;
+    const snap=state.friendSnaps[t.token];             // public snapshot, already on-device
+    if(!snap) return;
+    (snap.events||[]).forEach(e=>{
+      if(e.date<from||e.date>to) return;
+      const c=(snap.cats||{})[e.catId];
+      events.push({targetIndex:i, date:e.date, time:e.time||'', end:e.end||'',
+        title:e.title||'', color:(c&&c.color)||'#64748B', isPrivate:false});
+    });
+  });
+  events.sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:(a.time||'99')<(b.time||'99')?-1:1);
+  return {
+    version:2, savedAt:Date.now(), weekStart:WIDGET_WEEK_START,
+    includePrivate:!!cfg.includePrivate,
+    selectedIndex:Math.max(0,Math.min(cfg.selectedIndex||0,targets.length-1)),
+    targets, events,
+  };
+}
+async function pushWidgetIOS(){
+  const br=widgetBridge(); if(!br||!isIOS()) return null;
+  const payload=buildWidgetPayload();
+  try{
+    await br.setItem({group:WIDGET_APP_GROUP, key:WIDGET_KEY_IOS, value:JSON.stringify(payload)});
+    if(br.reloadAllTimelines) await br.reloadAllTimelines();
+  }catch(e){}
+  return payload;
+}
+/* every edit rewrites the snapshot; debounced so a drag doesn't write 30 times */
+let widgetSnapT;
+function scheduleWidgetSnapshot(){
+  if(!isIOS()) return;
+  clearTimeout(widgetSnapT);
+  widgetSnapT=setTimeout(pushWidgetIOS,400);
+}
+/* coming back to the foreground: the day may have rolled over, so rewrite */
+if(isIOS()){
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden) pushWidgetIOS(); });
+  window.addEventListener('pageshow',()=>pushWidgetIOS());
+}
+
+/* ---------- iOS widget sheet: pick the target + opt private events in ---------- */
+function ensureWidgetIOSSheet(){
+  if(document.getElementById('widgetIosScrim')) return;
+  const scrim=document.createElement('div');
+  scrim.className='scrim'; scrim.id='widgetIosScrim';
+  scrim.innerHTML=`
+    <div class="sheet" role="dialog" aria-modal="true" style="max-width:460px">
+      <h2>홈 위젯</h2>
+      <p class="sub">홈 화면 위젯(이번 달 · 이번 주)에 보여줄 캘린더를 고르세요. 위젯은 <b>이 기기 안에서만</b> 읽어요 — 서버로 보내지 않아요.</p>
+      <div id="widgetIosList"></div>
+      <div class="wrow" style="margin-top:10px">
+        <div class="switch" id="widgetPrivSwitch" role="switch" aria-checked="false"></div>
+        <div class="wrow-main"><span class="wrow-name">비공개 일정 포함</span></div>
+      </div>
+      <p class="sub" id="widgetPrivWarn" style="display:none">위젯·잠금화면에 비공개 일정의 <b>제목이 그대로 표시</b>돼요.</p>
+      <div class="sheet-actions">
+        <button class="btn ghost" id="widgetIosCancel">닫기</button>
+        <button class="btn solid" id="widgetIosSave" style="flex:1">위젯에 적용</button>
+      </div>
+    </div>`;
+  document.body.appendChild(scrim);
+  scrim.onclick=ev=>{ if(ev.target===scrim) closeScrim('#widgetIosScrim'); };
+  $('#widgetIosCancel').onclick=()=>closeScrim('#widgetIosScrim');
+  $('#widgetIosSave').onclick=saveWidgetIOSChoice;
+}
+function renderWidgetIOSSheet(){
+  const targets=widgetTargets();
+  const cfg=state.widgetIOS;
+  const sel=Math.max(0,Math.min(cfg.selectedIndex||0,targets.length-1));
+  $('#widgetIosList').innerHTML=targets.map((t,i)=>`
+    <div class="wrow" data-i="${i}">
+      <div class="switch${i===sel?' on':''}" data-pick role="radio" aria-checked="${i===sel}"></div>
+      <div class="wrow-main"><span class="wrow-name">${esc(t.name)}</span><span class="wrow-kind">${t.kind==='mine'?'내 캘린더':'친구'}</span></div>
+    </div>`).join('');
+  $('#widgetIosList').querySelectorAll('.wrow').forEach(row=>{
+    row.querySelector('[data-pick]').onclick=()=>{        // radio: exactly one target
+      $('#widgetIosList').querySelectorAll('[data-pick]').forEach(s=>{ s.classList.remove('on'); s.setAttribute('aria-checked','false'); });
+      const s=row.querySelector('[data-pick]'); s.classList.add('on'); s.setAttribute('aria-checked','true');
+    };
+  });
+  const priv=$('#widgetPrivSwitch');
+  priv.classList.toggle('on',!!cfg.includePrivate);
+  priv.setAttribute('aria-checked',String(!!cfg.includePrivate));
+  $('#widgetPrivWarn').style.display=cfg.includePrivate?'':'none';
+  priv.onclick=function(){
+    const on=!this.classList.contains('on');
+    this.classList.toggle('on',on); this.setAttribute('aria-checked',String(on));
+    $('#widgetPrivWarn').style.display=on?'':'none';
+  };
+}
+function openWidgetIOS(){ ensureWidgetIOSSheet(); renderWidgetIOSSheet(); openScrim('#widgetIosScrim'); }
+async function saveWidgetIOSChoice(){
+  const rows=[...document.querySelectorAll('#widgetIosList .wrow')];
+  const picked=rows.findIndex(r=>r.querySelector('[data-pick]').classList.contains('on'));
+  state.widgetIOS={
+    selectedIndex:picked<0?0:picked,
+    includePrivate:$('#widgetPrivSwitch').classList.contains('on'),
+  };
+  saveWidgetIOS();
+  await pushWidgetIOS();
+  closeScrim('#widgetIosScrim');
+  toast('위젯에 적용했어요');
+}
+
 /* ---------- holidays (server-cached, then cached on-device so they show offline) ---------- */
 const HOLIDAYS={};
 const holidayYears=new Set();        // attempted (cache read and, when online, a fetch)
@@ -2374,9 +2531,10 @@ function retryHolidays(){
 
 /* ---------- boot ---------- */
 async function loadState(){
-  const [ev,cats,links,seen,saved,widget,snaps]=await Promise.all([
-    idbGet('events'),idbGet('categories'),idbGet('shareLinks'),idbGet('cmtSeenAt'),idbGet('savedLinks'),idbGet('widgetConfig'),idbGet('friendSnaps')
+  const [ev,cats,links,seen,saved,widget,snaps,widgetIOS]=await Promise.all([
+    idbGet('events'),idbGet('categories'),idbGet('shareLinks'),idbGet('cmtSeenAt'),idbGet('savedLinks'),idbGet('widgetConfig'),idbGet('friendSnaps'),idbGet('widgetIOS')
   ]);
+  if(widgetIOS&&typeof widgetIOS==='object') state.widgetIOS={selectedIndex:widgetIOS.selectedIndex|0, includePrivate:!!widgetIOS.includePrivate};
   if(Array.isArray(cats)&&cats.length) state.categories=cats;
   if(Array.isArray(ev)) state.events=ev;          // stored (even empty) → respect it
                                                   // first run → start with an empty calendar
@@ -2406,5 +2564,6 @@ async function initApp(){
   renderDow(); applyTheme(); renderTimeline();    // first full render is done here
   hideBootLoading();                              // reveal only once the calendar is painted
   if(overlayOn()) refreshOverlays();              // restore any friends' overlays from last time
+  pushWidgetIOS();                                // cold start: refresh the widget snapshot (iOS only)
 }
 initApp();
