@@ -87,8 +87,8 @@ workflows:
       xcode: latest
       cocoapods: default
       vars:
-        APP_BUNDLE_ID: com.shareday.app
-        WIDGET_BUNDLE_ID: com.shareday.app.ShareDayWidget
+        APP_BUNDLE_ID: com.mygenie.shareday
+        WIDGET_BUNDLE_ID: com.mygenie.shareday.ShareDayWidget
     scripts:
       - name: Install JS deps
         script: npm ci

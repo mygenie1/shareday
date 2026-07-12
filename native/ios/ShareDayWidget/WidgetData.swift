@@ -8,7 +8,7 @@ import SwiftUI
 ///
 /// The app writes this through the WidgetBridge Capacitor plugin (see calendar.js,
 /// pushWidgetIOS). Key is v2: Android still owns the legacy `shareday_widget` key.
-let APP_GROUP = "group.com.shareday.app"
+let APP_GROUP = "group.com.mygenie.shareday"
 let WIDGET_KEY = "shareday_widget_v2"
 
 struct WTarget: Codable, Hashable {

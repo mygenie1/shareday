@@ -16,14 +16,14 @@
 [웹앱: 메뉴 → 홈 위젯]  사용자가 공개 캘린더 선택
       │  WidgetBridge.setItem({group, key:"shareday_widget", value: JSON})
       ▼
-[공유 저장소] iOS: App Group UserDefaults(group.com.shareday.app)
+[공유 저장소] iOS: App Group UserDefaults(group.com.mygenie.shareday)
              Android: SharedPreferences("shareday_widget_prefs")
       │  값: { tokens:[{token,name,kind}], selectedIndex, base }
       ▼
 [위젯]  selectedIndex 토큰으로 base + /api/share/{token} fetch → 오늘 공개 일정 렌더
         (iOS 45분, Android ~30분 주기 · 앱에서 바꾸면 즉시 reload)
 ```
-- 앱 식별자: **`com.shareday.app`**, App Group: **`group.com.shareday.app`**, 이름 "셰어데이".
+- 앱 식별자: **`com.mygenie.shareday`**, App Group: **`group.com.mygenie.shareday`**, 이름 "셰어데이".
 - 앱 본체 로딩: 앱에 번들된 셸(`webDir = capacitor-www`, `npm run build:shell`로 생성). 오프라인에도 열리며, 서버가 필요한 기능만 `https://shareday-seven.vercel.app`으로 호출한다(`middleware.ts`가 CORS 허용).
 
 ---
@@ -71,7 +71,7 @@ npx cap sync
 ## STEP 2. iOS 위젯 (WidgetKit + SwiftUI)
 1. Xcode: **File → New → Target → Widget Extension** (이름 `ShareDayWidget`, "Include Configuration Intent" 체크 해제).
 2. 생성된 위젯 타깃에서 기본 파일을 지우고 `native/ios/ShareDayWidget/WidgetData.swift`, `ShareDayWidget.swift` 추가.
-3. **App Group** 설정: App 타깃과 위젯 타깃 **둘 다** Signing & Capabilities → App Groups → `group.com.shareday.app` 추가.
+3. **App Group** 설정: App 타깃과 위젯 타깃 **둘 다** Signing & Capabilities → App Groups → `group.com.mygenie.shareday` 추가.
 4. **딥링크**: App 타깃 Info에 URL Scheme `shareday` 등록(위젯 탭 → `shareday://calendar` → 앱 열림).
 5. 서명: 두 타깃 모두 팀 선택(Codemagic 자동 서명이면 프로비저닝만 맞추면 됨).
 6. iOS 17+ 이면 위젯의 ↻ 버튼으로 캘린더 전환(AppIntent). 16 이하는 탭 시 앱 열림으로 폴백.

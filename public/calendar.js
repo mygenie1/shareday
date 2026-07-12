@@ -2248,7 +2248,7 @@ async function renderRecv(){
    selection to the native shared store (iOS App Group / Android SharedPreferences)
    via the WidgetBridge Capacitor plugin. On plain web the plugin is absent, so we
    just persist the choice locally and show a hint. */
-const WIDGET_APP_GROUP='group.com.shareday.app';
+const WIDGET_APP_GROUP='group.com.mygenie.shareday';
 const WIDGET_KEY='shareday_widget';
 state.widgetConfig=null;   // {tokens:[{token,name,kind}], selectedIndex}
 function saveWidgetConfigLocal(){ idbSet('widgetConfig', state.widgetConfig); }

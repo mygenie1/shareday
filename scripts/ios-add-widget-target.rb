@@ -24,7 +24,7 @@ ROOT         = File.expand_path('..', __dir__)
 PROJECT_PATH = File.join(ROOT, 'ios', 'App', 'App.xcodeproj')
 APP_TARGET   = 'App'
 WIDGET_TARGET = 'ShareDayWidgetExtension'
-APP_BUNDLE_ID = 'com.shareday.app'
+APP_BUNDLE_ID = 'com.mygenie.shareday'
 WIDGET_BUNDLE_ID = "#{APP_BUNDLE_ID}.ShareDayWidget"
 DEPLOYMENT_TARGET = '17.0'   # AppIntentConfiguration + interactive widgets
 
@@ -111,9 +111,15 @@ widget.build_configurations.each do |config|
   )
 end
 
-# ── 3. App Group entitlement on the app target too (the web shell writes the snapshot
-#       through WidgetBridge, so the app needs the same container as the widget)
+# ── 3. the app target: bundle id + the App Group entitlement (the web shell writes the
+#       snapshot through WidgetBridge, so the app needs the same container as the widget).
+#       The bundle id is owned here, not in the pbxproj, so that changing it in one
+#       place and re-running keeps the app and the widget in step.
 app.build_configurations.each do |config|
+  if config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] != APP_BUNDLE_ID
+    config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = APP_BUNDLE_ID
+    changed << "app bundle id (#{config.name}) → #{APP_BUNDLE_ID}"
+  end
   unless config.build_settings['CODE_SIGN_ENTITLEMENTS'] == APP_ENTITLEMENTS
     config.build_settings['CODE_SIGN_ENTITLEMENTS'] = APP_ENTITLEMENTS
     changed << "app entitlements (#{config.name})"
