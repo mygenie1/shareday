@@ -1,124 +1,124 @@
-# 셰어데이 홈 화면 위젯 — 셋업 런북
+# 셰어데이 홈 화면 위젯 — 런북
 
-기존 웹앱은 그대로 두고, **Capacitor**로 네이티브 껍데기를 만들어 **홈 화면 위젯**을 iOS·안드로이드에 붙인다.
-위젯은 **서버의 공개 스냅샷(`GET /api/share/[token]`)만** 읽는다 — 프라이빗 일정은 위젯에 절대 안 뜬다(로컬 전용).
+웹앱은 그대로 두고, **Capacitor**로 네이티브 껍데기를 씌워 홈 화면 위젯을 붙인다.
+앱 본체는 번들된 셸(`webDir = capacitor-www`, `npm run build:shell`로 생성)을 띄우므로 오프라인에도 열리고, 서버가 필요한 기능만 `https://shareday-seven.vercel.app`으로 호출한다(`middleware.ts`가 CORS 허용).
 
-> 현재 상태:
-> - **웹 브리지**: 완성·검증됨(`public/calendar.js`, 메뉴 "홈 위젯").
-> - **안드로이드**: `npx cap add android` 로 `android/` 생성 완료 + **위젯이 이미 통합돼 있음**(Java 위젯 provider/worker/plugin, res, Manifest receiver+딥링크, MainActivity `registerPlugin`, WorkManager 의존성). → **Android Studio에서 `android/` 열어 빌드만** 하면 됨.
-> - **iOS**: 소스는 `native/ios/`에 스테이징. Mac에서 `npx cap add ios` 후 STEP 2대로 위젯 타깃·App Group 추가.
-> - ⚠️ 안드로이드 통합은 이 저장소(웹/Windows, JDK·SDK 없음)에서 **컴파일 검증은 못 함** — Android Studio에서 빌드하며 확인 필요.
-
----
-
-## 데이터 흐름
-```
-[웹앱: 메뉴 → 홈 위젯]  사용자가 공개 캘린더 선택
-      │  WidgetBridge.setItem({group, key:"shareday_widget", value: JSON})
-      ▼
-[공유 저장소] iOS: App Group UserDefaults(group.com.mygenie.shareday)
-             Android: SharedPreferences("shareday_widget_prefs")
-      │  값: { tokens:[{token,name,kind}], selectedIndex, base }
-      ▼
-[위젯]  selectedIndex 토큰으로 base + /api/share/{token} fetch → 오늘 공개 일정 렌더
-        (iOS 45분, Android ~30분 주기 · 앱에서 바꾸면 즉시 reload)
-```
-- 앱 식별자: **`com.mygenie.shareday`**, App Group: **`group.com.mygenie.shareday`**, 이름 "셰어데이".
-- 앱 본체 로딩: 앱에 번들된 셸(`webDir = capacitor-www`, `npm run build:shell`로 생성). 오프라인에도 열리며, 서버가 필요한 기능만 `https://shareday-seven.vercel.app`으로 호출한다(`middleware.ts`가 CORS 허용).
+> **iOS와 안드로이드는 지금 설계가 다르다.** 같은 코드로 수렴시키기 전까지는 이 차이를 알고 봐야 한다.
+>
+> | | iOS | 안드로이드 |
+> |---|---|---|
+> | 위젯 데이터 | **App Group 로컬 스냅샷** (네트워크 없음) | 서버 공개 스냅샷 `GET /api/share/[token]` fetch |
+> | 표시 대상 | **내 일정**(기본) ↔ 받은 친구 캘린더 | 공유 링크 토큰으로 고른 **공개** 캘린더 |
+> | 프라이빗 | 앱 토글로 **포함 가능**(기본 꺼짐) | 절대 안 뜸(공개 스냅샷뿐) |
+> | 위젯 종류 | 2종 — 이번 달 / 이번 주 | 1종 — 오늘 목록 |
+> | 공유 저장소 키 | `shareday_widget_v2` | `shareday_widget` (레거시) |
+> | 번들 ID | `com.mygenie.shareday` | `com.shareday.app` |
+>
+> 두 경로는 **서로 다른 키**를 쓰므로 섞이지 않는다. `WidgetBridgePlugin.java`는 JS가 넘기는 `group` 인자를 무시하고 항상 자기 `SharedPreferences("shareday_widget_prefs")`를 읽는다 — iOS의 App Group 상수를 바꿔도 안드로이드는 영향이 없다.
 
 ---
 
-## STEP 0. 사전 준비 (한 번)
+## iOS
+
+### 데이터 흐름 — 위젯은 서버를 부르지 않는다
+```
+[앱] 일정 추가·수정·삭제(afterMutate) / 포그라운드 복귀 / 콜드 스타트
+      │  pushWidgetIOS()  — public/calendar.js
+      │    · 내 일정: expandRange()로 RRULE을 펼친 인스턴스
+      │    · 친구 일정: 이미 캐시된 friendSnaps(공개 스냅샷)
+      │    · 카테고리 색을 미리 박아 넣음(위젯은 조인 못 함)
+      │    · 비공개 토글이 꺼져 있으면 여기서 제외 — 위젯에 넘기지 않는다
+      ▼
+[App Group] UserDefaults(group.com.mygenie.shareday) · key "shareday_widget_v2"
+      │   { version:2, weekStart:0, includePrivate, selectedIndex,
+      │     targets:[{kind:'mine'|'friend', name, token}],
+      │     events:[{targetIndex, date, time, end, title, color, isPrivate}] }
+      ▼
+[위젯] loadSnapshot() → 렌더. WidgetBridge.reloadAllTimelines()로 즉시 갱신,
+       그 외에는 자정에만 다시 그린다(네트워크가 없으니 주기 폴링할 이유가 없음).
+```
+
+**프라이버시**: 개인 일정은 서버로 가지 않는다. 위젯 payload는 기기 안 App Group에만 쓰인다. 비공개 일정은 토글이 꺼져 있으면 payload 단계에서 빠지므로, 위젯 쪽에서 걸러지는 게 아니라 **애초에 건네지지 않는다**.
+
+### 위젯 2종
+- **이번 달** (`systemMedium`/`systemLarge`) — 월 그리드, 일정 있는 날에 카테고리 색점.
+- **이번 주** (`systemSmall`/`systemMedium`) — 이번 주(일요일 시작) 일정을 시간순 목록으로.
+
+둘 다 `AppIntentConfiguration`이다.
+- **길게눌러 설정** → 캘린더를 지정하면 그 위젯은 거기에 **고정**되고 ↻ 버튼이 숨는다.
+- 비워 두면 앱의 선택(`selectedIndex`)을 따라가고, 위젯의 **↻ 버튼**이 그 선택을 순환시킨다.
+- 탭 → `shareday://calendar` → 앱 열림.
+
+### 식별자
+- 앱 `com.mygenie.shareday` · 위젯 `com.mygenie.shareday.ShareDayWidget` · App Group `group.com.mygenie.shareday`
+- 번들 ID는 **`scripts/ios-add-widget-target.rb`의 상수가 소유**한다. 바꾸려면 거기 한 줄을 고치고 스크립트를 재실행하면 앱·위젯 pbxproj가 함께 따라온다.
+- URL scheme `shareday`는 번들 ID와 무관하게 유지.
+
+### 파일이 어디 있나
+| 파일 | 역할 |
+|---|---|
+| `native/ios/App/WidgetBridge.swift` / `.m` | Capacitor 플러그인 — `setItem`/`getItem`/`reloadAllTimelines`. `.m`의 `CAP_PLUGIN`이 자동 등록하므로 별도 코드 불필요 |
+| `native/ios/ShareDayWidget/WidgetData.swift` | App Group I/O + 스냅샷 모델. **네트워크 코드 없음** |
+| `native/ios/ShareDayWidget/ShareDayWidget.swift` | 위젯 2종 + `WidgetBundle` + ↻/설정 인텐트 |
+| `native/ios/ShareDayWidget/Info.plist`, `*.entitlements` | 익스텐션 설정 · App Group |
+| `public/calendar.js` (`pushWidgetIOS` 부근) | 스냅샷 작성 + 위젯 설정 시트 |
+
+소스는 `native/ios/`에 그대로 두고 Xcode 프로젝트가 **참조**한다(복사본 없음). 고칠 때도 여기만 고친다.
+
+### Xcode 타깃 (Mac 없이)
+`npx cap add ios`는 App 타깃 하나만 만든다. 위젯 익스텐션은 Xcode 없이는 못 넣으므로 pbxproj를 스크립트로 기술한다:
+
 ```bash
-npm install                 # @capacitor/* 설치 (package.json에 추가돼 있음)
-# android/ 는 이미 생성·통합·커밋됨 → 재실행 불필요. 웹 바뀌면: npx cap sync android
-npx cap add ios             # ios/ 프로젝트 생성 (Mac 필요)
-npx cap sync
+gem install xcodeproj
+ruby scripts/ios-add-widget-target.rb     # 멱등 — 두 번 돌려도 안전
 ```
-> `ios/`도 생성 후 **커밋**한다(Codemagic이 그대로 빌드). 이후엔 `npx cap sync`만.
-> **안드로이드는 STEP 1~3이 이미 적용돼 있음** — 아래 Android 세부는 "무엇이 어디 있는지" 참고용. 바로 STEP 4 또는 `android/`를 Studio에서 빌드.
+스크립트가 하는 일: App 타깃에 WidgetBridge 소스 + App Group entitlement + 번들 ID, `ShareDayWidgetExtension` 타깃(iOS 17, 자체 entitlement) 생성, `.appex`를 PlugIns에 임베드, 앱→위젯 의존성, 위젯 버전을 앱과 동기화(App Store Connect가 일치를 요구).
+결과 `project.pbxproj`는 **커밋**한다. Codemagic도 같은 스크립트를 안전망으로 재실행한다.
+
+> 위젯 익스텐션은 **iOS 17+**. `AppIntentConfiguration`과 인터랙티브 버튼을 availability 분기 없이 쓰기 위해서다. 그 이하 기기에선 위젯만 안 보이고 앱은 정상 동작한다.
+
+### 애플 콘솔에서 먼저 만들어 둘 것 (사람이 직접)
+1. App Group `group.com.mygenie.shareday`
+2. App ID `com.mygenie.shareday` — App Groups capability + 위 그룹
+3. App ID `com.mygenie.shareday.ShareDayWidget` — App Groups + 같은 그룹
+4. App Store distribution 프로비저닝 프로파일 **2개**(앱 + 위젯)
+
+### Codemagic (`ios-testflight`)
+`npm ci` → `build:shell`(커밋 해시를 `SHAREDAY_BUILD`로 스탬프) → `cap sync ios` → 위젯 타깃 스크립트 → `pod install` → **앱·위젯 프로파일을 각각** `fetch-signing-files` → `use-profiles` → `agvtool new-version -all $BUILD_NUMBER` → `build-ipa` → TestFlight.
+
+빌드 마커는 앱 메뉴 맨 아래에 `build <해시>`로 작게 뜬다. 테스트 기기에서 **"이 빌드가 정말 최신 코드인가"** 를 확인하는 유일한 방법이다(웹에선 렌더되지 않는다).
 
 ---
 
-## STEP 1. WidgetBridge 플러그인 (앱↔위젯 통신)
+## 안드로이드 (기존 설계 그대로)
 
-### iOS
-1. `native/ios/App/WidgetBridge.swift`, `native/ios/App/WidgetBridge.m` 를 **App 타깃**(`ios/App/App/`)에 추가.
-2. 별도 등록 코드는 불필요 — `.m`의 `CAP_PLUGIN` 매크로가 자동 등록한다.
+`android/`는 이미 생성·통합·커밋됨 — Java 위젯 provider/worker/plugin, res, Manifest receiver+딥링크, `registerPlugin`, WorkManager. 웹이 바뀌면 `npx cap sync android`.
 
-### Android
-1. `native/android/plugin/WidgetBridgePlugin.kt` 를 `android/app/src/main/java/com/shareday/app/` 에 복사.
-2. `MainActivity.kt`(같은 패키지)에서 **등록**:
-   ```kotlin
-   import com.getcapacitor.BridgeActivity
-   class MainActivity : BridgeActivity() {
-     override fun onCreate(savedInstanceState: android.os.Bundle?) {
-       registerPlugin(WidgetBridgePlugin::class.java)   // super.onCreate 전에
-       super.onCreate(savedInstanceState)
-     }
-   }
-   ```
-3. `android/app/build.gradle`에 WorkManager 의존성:
-   ```gradle
-   dependencies { implementation "androidx.work:work-runtime-ktx:2.9.1" }
-   ```
+- 앱 메뉴 → **홈 위젯** → 공개 캘린더(공유 링크 토큰) 선택 → `SharedPreferences`에 기록 → 위젯이 `base + /api/share/{token}`을 fetch해 **오늘 공개 일정** 표시.
+- 배터리를 생각해 fetch 주기는 ~30분. 앱에서 바꾸면 즉시 reload.
+- **프라이빗 일정은 뜨지 않는다** — 공개 스냅샷만 읽으므로 구조적으로 불가능.
+- 빠른 확인: Codemagic `android-debug` 워크플로 → Artifacts의 `app-debug.apk` 사이드로드.
+- 배포: `android-internal` → Play 내부 테스트.
 
-> JS 쪽(`public/calendar.js`)은 `window.Capacitor.Plugins.WidgetBridge` 를 자동으로 감지한다.
-> 플러그인이 없으면(웹) 선택을 IndexedDB에만 저장하고 안내 문구를 띄운다 — 그대로 동작.
+시크릿(저장소에 커밋 금지): `shareday_android` 그룹에 `CM_KEYSTORE`(base64 .jks), `CM_KEYSTORE_PASSWORD`, `CM_KEY_ALIAS`, `CM_KEY_PASSWORD`, `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS`. iOS는 `shareday_ios` 그룹 + ASC API 키 통합(`shareday_asc_key`).
 
 ---
 
-## STEP 2. iOS 위젯 (WidgetKit + SwiftUI)
-1. Xcode: **File → New → Target → Widget Extension** (이름 `ShareDayWidget`, "Include Configuration Intent" 체크 해제).
-2. 생성된 위젯 타깃에서 기본 파일을 지우고 `native/ios/ShareDayWidget/WidgetData.swift`, `ShareDayWidget.swift` 추가.
-3. **App Group** 설정: App 타깃과 위젯 타깃 **둘 다** Signing & Capabilities → App Groups → `group.com.mygenie.shareday` 추가.
-4. **딥링크**: App 타깃 Info에 URL Scheme `shareday` 등록(위젯 탭 → `shareday://calendar` → 앱 열림).
-5. 서명: 두 타깃 모두 팀 선택(Codemagic 자동 서명이면 프로비저닝만 맞추면 됨).
-6. iOS 17+ 이면 위젯의 ↻ 버튼으로 캘린더 전환(AppIntent). 16 이하는 탭 시 앱 열림으로 폴백.
+## 실기기 확인 체크리스트 (TestFlight)
+앱을 완전 삭제 후 재설치(캐시 회피).
 
-## STEP 3. 안드로이드 위젯 (App Widget + RemoteViews)
-1. 아래를 `android/app/src/main/` 아래 대응 위치로 복사:
-   - `native/android/widget/ShareDayWidgetProvider.kt`, `WidgetFetchWorker.kt` → `java/com/shareday/app/`
-   - `res/layout/shareday_widget.xml` → `res/layout/`
-   - `res/drawable/widget_dot.xml`, `widget_bg.xml` → `res/drawable/`
-   - `res/xml/shareday_widget_info.xml` → `res/xml/`
-2. `AndroidManifest.additions.xml` 의 내용을 `AndroidManifest.xml`에 병합(리시버는 `<application>` 안, 딥링크 intent-filter는 MainActivity `<activity>` 안, INTERNET 권한).
-3. 빌드 후 홈 화면 → 위젯 추가 → "셰어데이".
+- [ ] 메뉴 하단 빌드 마커가 최신 커밋 해시와 일치한다.
+- [ ] 앱이 정상 기동(흰 화면 아님), 비행기 모드에서도 캘린더가 뜬다.
+- [ ] 위젯 갤러리에 **셰어데이 2종**(이번 달 / 이번 주)이 보인다.
+- [ ] 위젯에 **내 일정**이 보인다. ↻로 친구 캘린더로 전환된다. 길게눌러 설정으로도 지정된다.
+- [ ] "비공개 일정 포함"이 꺼져 있으면 프라이빗 일정이 위젯에 **안 보이고**, 켜면 보인다.
+- [ ] 일정을 추가·수정하면 위젯이 갱신된다(약간의 지연은 정상 — OS가 타임라인 리로드를 조절한다).
+- [ ] 위젯 탭 → 앱이 열린다.
+- [ ] 웹·안드로이드 기존 기능에 회귀가 없다.
 
----
-
-## STEP 4. Codemagic 빌드/배포
-
-### 4-0. 안드로이드 빠른 확인 (서명·Play 불필요, 먼저 이걸로)
-1. Codemagic → 저장소 연결(`mygenie1/shareday`). `codemagic.yaml` 자동 인식.
-2. **`android-debug`** 워크플로 실행 → 빌드 성공 = 위젯 통합 코드가 **컴파일됨**.
-3. 빌드 결과 **Artifacts**에서 `app-debug.apk` 다운로드 → 폰에 설치(출처 불명 앱 허용).
-4. 앱 열기(웹앱 그대로 뜸) → 메뉴 **홈 위젯** → 공개 캘린더 선택·적용 → 홈 화면에 "셰어데이" 위젯 추가 → 오늘 공개 일정 확인.
-   - 빌드가 **빨간색**이면 로그의 컴파일 에러를 알려주면 그 파일을 고친다.
-
-### 4-1. 서명 빌드 / 스토어 배포 (확인 끝난 뒤)
-1. 시크릿(그룹) 설정 — **저장소에 커밋 금지**:
-   - `shareday_android`: `CM_KEYSTORE`(base64 .jks), `CM_KEYSTORE_PASSWORD`, `CM_KEY_ALIAS`, `CM_KEY_PASSWORD`, `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS`.
-   - `shareday_ios`: App Store Connect API 키 통합(`shareday_asc_key`), 배포/위젯 프로비저닝.
-3. `android-internal` → Play **내부 테스트**, `ios-testflight` → **TestFlight** 로 먼저 배포해 실기기에서 위젯 확인.
-
----
-
-## 검증 체크리스트
-- [ ] 앱 본체가 기존 웹앱 그대로 뜬다(웹뷰, 번들된 capacitor-www 셸).
-- [ ] 앱 메뉴 → **홈 위젯** → 공개 캘린더 선택 → 저장 → 공유 저장소에 기록.
-- [ ] iOS/안드 위젯이 홈에서 **오늘 공개 일정**을 표시.
-- [ ] 위젯 ↻(iOS17+/안드) 로 내 공개/친구 캘린더 **전환**.
-- [ ] 위젯 탭 → 앱 열림(`shareday://calendar`).
-- [ ] 만료/폐기 링크(410/404) → "링크가 만료됐어요", 네트워크 실패 → 조용히 마지막 렌더.
-- [ ] **프라이빗 일정은 위젯에 안 뜸**(공개 스냅샷만).
-
----
-
-## 정직한 한계 · 주의
-- 위젯 UI는 **플랫폼별 네이티브 2벌**(SwiftUI / RemoteViews). 한 코드로 자동 생성 안 됨.
-- `native/`의 Swift/Kotlin/XML은 **리뷰로 검증**된 스캐폴드다 — 이 저장소(웹)에서 컴파일/실행 검증은 불가. Xcode/Studio에서 임포트·iOS 버전 가드·리소스 경로를 최종 확인해야 한다.
-- 서버 fetch 주기는 배터리 고려 30분~1h(더 자주 금지). OS가 갱신 주기를 조절할 수 있다.
-- 권장 순서: **안드로이드 위젯 먼저** 완성해 흐름 검증 → iOS.
-- 네이티브 빌드·스토어 심사가 따르므로 웹처럼 즉시 반영이 아니다.
-- 계정 도입 전까지 위젯은 **공유 링크 토큰 기반 공개 데이터**만. 프라이빗은 향후 계정+동기화 시 확장.
+## 정직한 한계
+- 위젯 UI는 **플랫폼별 네이티브 2벌**(SwiftUI / RemoteViews). 한 코드로 안 된다.
+- iOS 위젯 Swift는 이 저장소(Windows)에서 **컴파일 검증 불가**. 첫 Codemagic 빌드가 진짜 첫 컴파일이다 — 빨간불이 나면 로그를 보고 고친다.
+- 위젯 갱신 시점은 최종적으로 **OS가 결정**한다. 앱이 `reloadAllTimelines()`를 불러도 즉시가 보장되진 않는다.
+- iOS 위젯이 보여주는 친구 일정은 앱이 **마지막으로 캐시한** 공개 스냅샷이다(위젯이 직접 새로 받아오지 않는다). 앱을 열면 갱신된다.
+- 네이티브는 스토어 심사가 있어 웹처럼 즉시 반영되지 않는다.
