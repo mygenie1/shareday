@@ -477,6 +477,15 @@ function ensureMenu(){
       <span class="mi-label">홈 위젯</span>
     </button>`;
   document.body.appendChild(menu);
+  /* Build marker: only the native shell defines SHAREDAY_BUILD (build-shell.mjs stamps
+     the commit in), so on the web this renders nothing. It exists to answer one
+     question on a test device — "is this build actually the latest code?" */
+  if(window.SHAREDAY_BUILD){
+    const b=document.createElement('div');
+    b.style.cssText='padding:6px 14px 8px;font-size:10px;opacity:.45;text-align:right;letter-spacing:.02em';
+    b.textContent='build '+window.SHAREDAY_BUILD;
+    menu.appendChild(b);
+  }
   $('#miTheme').onclick=()=>toggleTheme();            // keep menu open so the switch animates
   $('#miCats').onclick=()=>{closeMenu();openSettings();};
   $('#miLinks').onclick=()=>{closeMenu();openShare();};

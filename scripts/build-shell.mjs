@@ -11,10 +11,23 @@
  * run the same UI. Run via `npm run build:shell` (cap:sync does it for you).
  */
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+/* Stamped into the shell and shown at the bottom of the app menu. On a test device
+   this is the only way to tell whether the build you installed is the code you think
+   it is. CI passes the commit in; locally we ask git; neither → "dev". */
+function buildId() {
+  if (process.env.SHAREDAY_BUILD_ID) return process.env.SHAREDAY_BUILD_ID;
+  try {
+    return execSync("git rev-parse --short HEAD", { cwd: root }).toString().trim();
+  } catch {
+    return "dev";
+  }
+}
 const out = join(root, "capacitor-www");
 mkdirSync(out, { recursive: true });
 
@@ -39,6 +52,7 @@ const html = `<!doctype html>
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>셰어데이</title>
     <script>${themeScript}</script>
+    <script>window.SHAREDAY_BUILD=${JSON.stringify(buildId())};</script>
     <!-- Webfont is a progressive enhancement: offline it simply falls back to the
          system stack declared in globals.css. Never block first paint on it. -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@latest/dist/web/static/pretendard.css" />

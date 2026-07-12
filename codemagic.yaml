@@ -86,20 +86,41 @@ workflows:
       node: 20
       xcode: latest
       cocoapods: default
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.shareday.app   # also add the widget extension id com.shareday.app.ShareDayWidget
+      vars:
+        APP_BUNDLE_ID: com.shareday.app
+        WIDGET_BUNDLE_ID: com.shareday.app.ShareDayWidget
     scripts:
       - name: Install JS deps
         script: npm ci
       - name: Build the offline app shell (capacitor-www/)
-        script: npm run build:shell
+        # SHAREDAY_BUILD_ID is stamped into the shell and shown at the bottom of the
+        # app menu, so a test device can prove which commit it is running.
+        script: SHAREDAY_BUILD_ID="$(git rev-parse --short HEAD)" npm run build:shell
       - name: Capacitor sync (platforms are committed)
         script: npx cap sync ios
+      # The widget target lives in the committed project.pbxproj. This is a safety net:
+      # idempotent, so it re-adds the target only if a cap regeneration ever drops it.
+      - name: Ensure the widget target exists
+        script: |
+          gem install xcodeproj --no-document
+          ruby scripts/ios-add-widget-target.rb
       - name: Pods
         script: cd ios/App && pod install
-      - name: Set up signing
-        script: xcode-project use-profiles
+      # The app and its extension are two bundle IDs and need a profile each — the
+      # automatic ios_signing block only handles one, so fetch both explicitly.
+      # Both App IDs must already exist with the App Groups capability (see WIDGETS.md).
+      - name: Fetch signing files (app + widget extension)
+        script: |
+          app-store-connect fetch-signing-files "$APP_BUNDLE_ID" --type IOS_APP_STORE --create
+          app-store-connect fetch-signing-files "$WIDGET_BUNDLE_ID" --type IOS_APP_STORE --create
+          keychain initialize
+          keychain add-certificates
+          xcode-project use-profiles
+      # TestFlight rejects a build number it has already seen. $BUILD_NUMBER is
+      # Codemagic's own counter; -all applies it to the app AND the widget, whose
+      # CFBundleVersion has to match the app's.
+      - name: Set the build number
+        script: cd ios/App && agvtool new-version -all "$BUILD_NUMBER"
       - name: Build IPA
         script: |
           xcode-project build-ipa \
@@ -107,6 +128,7 @@ workflows:
             --scheme "App"
     artifacts:
       - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
     publishing:
       app_store_connect:
         auth: integration
