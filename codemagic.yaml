@@ -79,7 +79,7 @@ workflows:
     max_build_duration: 90
     instance_type: mac_mini_m2
     integrations:
-      app_store_connect: shareday_asc_key   # configure the ASC API key integration in Codemagic
+      app_store_connect: codemagic_st   # the ASC API key integration registered in Codemagic
     environment:
       groups:
         - shareday_ios
