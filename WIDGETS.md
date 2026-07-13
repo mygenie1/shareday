@@ -100,7 +100,7 @@ ruby scripts/ios-add-widget-target.rb     # 멱등 — 두 번 돌려도 안전
 - 빠른 확인: Codemagic `android-debug` 워크플로 → Artifacts의 `app-debug.apk` 사이드로드.
 - 배포: `android-internal` → Play 내부 테스트.
 
-시크릿(저장소에 커밋 금지): `shareday_android` 그룹에 `CM_KEYSTORE`(base64 .jks), `CM_KEYSTORE_PASSWORD`, `CM_KEY_ALIAS`, `CM_KEY_PASSWORD`, `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS`. iOS는 `shareday_ios` 그룹 + ASC API 키 통합(`codemagic_st`).
+시크릿(저장소에 커밋 금지): `shareday_android` 그룹에 `CM_KEYSTORE`(base64 .jks), `CM_KEYSTORE_PASSWORD`, `CM_KEY_ALIAS`, `CM_KEY_PASSWORD`, `GCLOUD_SERVICE_ACCOUNT_CREDENTIALS`. iOS는 `shareday_ios` 그룹 + ASC API 키 통합(`codemagic`).
 
 ---
 
